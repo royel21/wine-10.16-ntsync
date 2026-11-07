@@ -34,7 +34,9 @@ struct vmr7_presenter
     IDirectDraw7 *ddraw;
     IDirectDrawSurface7 *frontbuffer;
     IDirectDrawSurface7 *primary;
+    IDirectDrawSurface7 *rgb_surface;
     HWND window;
+    BOOL clipper_set;
 
     SIZE native_size, aspect_ratio;
 };
@@ -86,6 +88,8 @@ static ULONG WINAPI image_presenter_Release(IVMRImagePresenter *iface)
     {
         if (presenter->frontbuffer)
             IDirectDrawSurface7_Release(presenter->frontbuffer);
+        if (presenter->rgb_surface)
+            IDirectDrawSurface7_Release(presenter->rgb_surface);
         IDirectDrawSurface7_Release(presenter->primary);
         IDirectDraw7_Release(presenter->ddraw);
         free(presenter);
@@ -103,6 +107,97 @@ static HRESULT WINAPI image_presenter_StopPresenting(IVMRImagePresenter *iface, 
 {
     FIXME("iface %p, cookie %#Ix, stub!\n", iface, cookie);
     return E_NOTIMPL;
+}
+
+static void set_primary_clipper(struct vmr7_presenter *presenter)
+{
+    IDirectDrawClipper *clipper;
+    HRESULT hr;
+
+    if (presenter->clipper_set || !presenter->window)
+        return;
+    presenter->clipper_set = TRUE;
+
+    if (FAILED(hr = IDirectDraw7_CreateClipper(presenter->ddraw, 0, &clipper, NULL)))
+    {
+        ERR("Failed to create clipper, hr %#lx.\n", hr);
+        return;
+    }
+    if (FAILED(hr = IDirectDrawClipper_SetHWnd(clipper, 0, presenter->window)))
+        ERR("Failed to set clip window, hr %#lx.\n", hr);
+    if (FAILED(hr = IDirectDrawSurface7_SetClipper(presenter->primary, clipper)))
+        ERR("Failed to set clipper, hr %#lx.\n", hr);
+    IDirectDrawClipper_Release(clipper);
+}
+
+/* The primary surface belongs to a windowless DDSCL_NORMAL ddraw object, so
+ * blitting to it draws on the desktop DC. That is hidden behind the owner's
+ * window whenever the application renders with Direct3D (black or white
+ * screen with sound only, especially in fullscreen). Draw the frame into the
+ * video window with GDI instead, converting it to RGB32 first if needed. */
+static BOOL present_to_window(struct vmr7_presenter *presenter, IDirectDrawSurface7 *surface)
+{
+    DDSURFACEDESC2 desc = {.dwSize = sizeof(desc)}, rgb_desc = {.dwSize = sizeof(rgb_desc)};
+    HDC src_dc, dst_dc;
+    BOOL ret = FALSE;
+    RECT rect;
+    HRESULT hr;
+
+    if (!presenter->window || !IsWindow(presenter->window))
+        return FALSE;
+    if (FAILED(IDirectDrawSurface7_GetSurfaceDesc(surface, &desc)))
+        return FALSE;
+
+    if (presenter->rgb_surface && (FAILED(IDirectDrawSurface7_GetSurfaceDesc(presenter->rgb_surface, &rgb_desc))
+            || rgb_desc.dwWidth != desc.dwWidth || rgb_desc.dwHeight != desc.dwHeight))
+    {
+        IDirectDrawSurface7_Release(presenter->rgb_surface);
+        presenter->rgb_surface = NULL;
+    }
+
+    if (!presenter->rgb_surface)
+    {
+        rgb_desc.dwSize = sizeof(rgb_desc);
+        rgb_desc.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_CAPS;
+        rgb_desc.dwWidth = desc.dwWidth;
+        rgb_desc.dwHeight = desc.dwHeight;
+        rgb_desc.ddpfPixelFormat.dwSize = sizeof(rgb_desc.ddpfPixelFormat);
+        rgb_desc.ddpfPixelFormat.dwFlags = DDPF_RGB;
+        rgb_desc.ddpfPixelFormat.dwRGBBitCount = 32;
+        rgb_desc.ddpfPixelFormat.dwRBitMask = 0x00ff0000;
+        rgb_desc.ddpfPixelFormat.dwGBitMask = 0x0000ff00;
+        rgb_desc.ddpfPixelFormat.dwBBitMask = 0x000000ff;
+        rgb_desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
+        if (FAILED(hr = IDirectDraw7_CreateSurface(presenter->ddraw, &rgb_desc, &presenter->rgb_surface, NULL)))
+        {
+            WARN("Failed to create RGB surface, hr %#lx.\n", hr);
+            presenter->rgb_surface = NULL;
+            return FALSE;
+        }
+    }
+
+    if (FAILED(hr = IDirectDrawSurface7_Blt(presenter->rgb_surface, NULL, surface, NULL, DDBLT_WAIT, NULL)))
+    {
+        WARN("Failed to convert frame, hr %#lx.\n", hr);
+        return FALSE;
+    }
+
+    if (FAILED(hr = IDirectDrawSurface7_GetDC(presenter->rgb_surface, &src_dc)))
+    {
+        WARN("Failed to get surface DC, hr %#lx.\n", hr);
+        return FALSE;
+    }
+
+    if ((dst_dc = GetDC(presenter->window)))
+    {
+        GetClientRect(presenter->window, &rect);
+        SetStretchBltMode(dst_dc, COLORONCOLOR);
+        ret = StretchBlt(dst_dc, 0, 0, rect.right, rect.bottom,
+                src_dc, 0, 0, desc.dwWidth, desc.dwHeight, SRCCOPY);
+        ReleaseDC(presenter->window, dst_dc);
+    }
+    IDirectDrawSurface7_ReleaseDC(presenter->rgb_surface, src_dc);
+    return ret;
 }
 
 static HRESULT WINAPI image_presenter_PresentImage(IVMRImagePresenter *iface,
@@ -124,6 +219,11 @@ static HRESULT WINAPI image_presenter_PresentImage(IVMRImagePresenter *iface,
 
     if (info->dwFlags & VMRSample_SrcDstRectsValid)
         FIXME("Ignoring src/dst rects.\n");
+
+    if (present_to_window(presenter, info->lpSurf))
+        return S_OK;
+
+    set_primary_clipper(presenter);
 
     GetClientRect(presenter->window, &rect);
     point.x = point.y = 0;
@@ -358,20 +458,14 @@ static HRESULT WINAPI windowless_control_SetVideoClippingWindow(
         IVMRWindowlessControl *iface, HWND window)
 {
     struct vmr7_presenter *presenter = impl_from_IVMRWindowlessControl(iface);
-    IDirectDrawClipper *clipper;
-    HRESULT hr;
 
     TRACE("iface %p, window %p.\n", iface, window);
 
-    if (FAILED(hr = IDirectDraw7_CreateClipper(presenter->ddraw, 0, &clipper, NULL)))
-        ERR("Failed to create clipper, hr %#lx.\n", hr);
-    if (FAILED(hr = IDirectDrawClipper_SetHWnd(clipper, 0, window)))
-        ERR("Failed to set clip window, hr %#lx.\n", hr);
-    if (FAILED(hr = IDirectDrawSurface7_SetClipper(presenter->primary, clipper)))
-        ERR("Failed to set clipper, hr %#lx.\n", hr);
-    IDirectDrawClipper_Release(clipper);
-
+    /* The clipper is only needed when frames are blitted to the primary surface. Attaching it makes
+     * wined3d create a GL surface on the video window, which hides the window's GDI content in
+     * some X servers (e.g. Winlator), so it is set up lazily in set_primary_clipper(). */
     presenter->window = window;
+    presenter->clipper_set = FALSE;
 
     return S_OK;
 }
