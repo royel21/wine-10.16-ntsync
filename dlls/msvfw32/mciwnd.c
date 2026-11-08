@@ -575,6 +575,15 @@ static LRESULT WINAPI MCIWndProc(HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lPa
             mwi->lasterror = mciSendCommandW(mwi->mci, MCI_OPEN,
                                              MCI_OPEN_ELEMENT | MCI_OPEN_ALIAS | MCI_WAIT,
                                              (DWORD_PTR)&mci_open);
+
+            /* the name can also be a device, e.g. "cdaudio" */
+            if (mwi->lasterror)
+            {
+                mci_open.lpstrDeviceType = (LPWSTR)lParam;
+                mwi->lasterror = mciSendCommandW(mwi->mci, MCI_OPEN,
+                                                 MCI_OPEN_TYPE | MCI_OPEN_ALIAS | MCI_WAIT,
+                                                 (DWORD_PTR)&mci_open);
+            }
             SetCursor(hCursor);
 
             if (mwi->lasterror && !(mwi->dwStyle & MCIWNDF_NOERRORDLG))
