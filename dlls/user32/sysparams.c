@@ -1090,8 +1090,7 @@ LONG WINAPI SetDisplayConfig(UINT32 path_info_count, DISPLAYCONFIG_PATH_INFO *pa
  */
 BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRect( RECT *rect, DWORD style, BOOL menu )
 {
-    TRACE( "(%s) %08lx %d\n", wine_dbgstr_rect( rect ), style, menu );
-    return NtUserAdjustWindowRect( rect, style, menu, 0, GetDpiForSystem() );
+    return AdjustWindowRectEx( rect, style, menu, 0 );
 }
 
 
