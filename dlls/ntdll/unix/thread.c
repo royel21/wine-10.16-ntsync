@@ -2372,9 +2372,9 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
     {
         PROCESSOR_NUMBER *number = data;
 
-        FIXME( "ThreadIdealProcessorEx info class - stub\n" );
         if (length != sizeof(*number)) return STATUS_INFO_LENGTH_MISMATCH;
         memset( number, 0, sizeof(*number) );
+        if (handle == GetCurrentThread()) number->Number = NtCurrentTeb()->IdealProcessorValue;
         if (ret_len) *ret_len = sizeof(*number);
         return STATUS_SUCCESS;
     }
@@ -2599,10 +2599,21 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
     {
         const ULONG *number = data;
 
+        ULONG previous = 0;
+
         if (length != sizeof(*number)) return STATUS_INFO_LENGTH_MISMATCH;
         if (*number > MAXIMUM_PROCESSORS) return STATUS_INVALID_PARAMETER;
-        FIXME( "ThreadIdealProcessor stub!\n" );
-        return STATUS_SUCCESS;
+
+        /* The ideal processor is only a scheduling hint. Keep it in the TEB like Windows does
+         * and return the previous value, which SetThreadIdealProcessor() reports to the caller;
+         * MAXIMUM_PROCESSORS only queries it. Other threads aren't tracked, report 0 for them. */
+        if (handle == GetCurrentThread())
+        {
+            previous = NtCurrentTeb()->IdealProcessorValue;
+            if (*number != MAXIMUM_PROCESSORS) NtCurrentTeb()->IdealProcessorValue = *number;
+        }
+        else TRACE( "ideal processor %u for thread %p ignored\n", (int)*number, handle );
+        return previous;
     }
 
     case ThreadPriorityBoost:
