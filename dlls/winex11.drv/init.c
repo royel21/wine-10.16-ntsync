@@ -182,7 +182,9 @@ static INT X11DRV_GetDeviceCaps( PHYSDEV dev, INT cap )
     switch(cap)
     {
     case SIZEPALETTE:
-        return palette_size;
+        /* without an X palette, let win32u report the emulated 8-bit one */
+        if (palette_size) return palette_size;
+        /* fall through */
     default:
         dev = GET_NEXT_PHYSDEV( dev, pGetDeviceCaps );
         return dev->funcs->pGetDeviceCaps( dev, cap );

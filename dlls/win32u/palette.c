@@ -346,7 +346,26 @@ static UINT get_system_palette_entries( HDC hdc, UINT start, UINT count, PALETTE
 /* null driver fallback implementation for GetSystemPaletteEntries */
 UINT nulldrv_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, PALETTEENTRY *entries )
 {
-    return 0;
+    const RGBQUAD *table;
+    UINT i;
+
+    /* an emulated 8-bit display has a 256-entry system palette, like Windows */
+    if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) != DT_RASDISPLAY ||
+        NtGdiGetDeviceCaps( dev->hdc, BITSPIXEL ) != 8)
+        return 0;
+    if (!entries) return 256;
+    if (start >= 256) return 0;
+    if (count > 256 - start) count = 256 - start;
+
+    table = get_default_color_table( 8 );
+    for (i = 0; i < count; i++)
+    {
+        entries[i].peRed   = table[start + i].rgbRed;
+        entries[i].peGreen = table[start + i].rgbGreen;
+        entries[i].peBlue  = table[start + i].rgbBlue;
+        entries[i].peFlags = 0;
+    }
+    return count;
 }
 
 /***********************************************************************

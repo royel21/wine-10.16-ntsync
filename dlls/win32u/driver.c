@@ -223,7 +223,12 @@ static INT nulldrv_GetDeviceCaps( PHYSDEV dev, INT cap )
     case ASPECTXY:        return (int)(hypot( NtGdiGetDeviceCaps( dev->hdc, ASPECTX ),
                                               NtGdiGetDeviceCaps( dev->hdc, ASPECTY )) + 0.5);
     case CAPS1:           return 0;
-    case SIZEPALETTE:     return 0;
+    case SIZEPALETTE:
+        /* an emulated 8-bit display is palette based, like on Windows */
+        if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) == DT_RASDISPLAY &&
+            NtGdiGetDeviceCaps( dev->hdc, BITSPIXEL ) == 8)
+            return 256;
+        return 0;
     case NUMRESERVED:     return 20;
     case PHYSICALWIDTH:   return 0;
     case PHYSICALHEIGHT:  return 0;
