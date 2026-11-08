@@ -1406,6 +1406,24 @@ BOOL WINAPI DECLSPEC_HOTPATCH FindNextFileA( HANDLE handle, WIN32_FIND_DATAA *da
 }
 
 
+/* Find handles are pointers to FIND_FIRST_INFO. Check that a handle points to readable memory
+ * before looking at it, so that a bogus handle (some cracks hand out fake ones such as 0xdeadface)
+ * fails without a page fault: under Box64 with protectors running on their own stack, the fault
+ * cannot be unwound and kills the process. */
+static BOOL is_readable_find_handle( HANDLE handle )
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    const DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
+                           PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+
+    if (!handle || handle == INVALID_HANDLE_VALUE) return FALSE;
+    if (NtQueryVirtualMemory( GetCurrentProcess(), handle, MemoryBasicInformation, &mbi, sizeof(mbi), NULL ))
+        return FALSE;
+    if (mbi.State != MEM_COMMIT || !(mbi.Protect & readable) || (mbi.Protect & PAGE_GUARD)) return FALSE;
+    return (char *)handle + sizeof(FIND_FIRST_INFO) <= (char *)mbi.BaseAddress + mbi.RegionSize;
+}
+
+
 /******************************************************************************
  *	FindNextFileW   (kernelbase.@)
  */
@@ -1418,7 +1436,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH FindNextFileW( HANDLE handle, WIN32_FIND_DATAW *da
 
     TRACE( "%p %p\n", handle, data );
 
-    if (!handle || handle == INVALID_HANDLE_VALUE || info->magic != FIND_FIRST_MAGIC)
+    if (!is_readable_find_handle( handle ) || info->magic != FIND_FIRST_MAGIC)
     {
         SetLastError( ERROR_INVALID_HANDLE );
         return ret;
@@ -1516,8 +1534,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH FindClose( HANDLE handle )
 {
     FIND_FIRST_INFO *info = handle;
 
-    if (!handle || handle == INVALID_HANDLE_VALUE)
+    if (!is_readable_find_handle( handle ))
     {
+        if (handle && handle != INVALID_HANDLE_VALUE) WARN( "illegal handle %p\n", handle );
         SetLastError( ERROR_INVALID_HANDLE );
         return FALSE;
     }
