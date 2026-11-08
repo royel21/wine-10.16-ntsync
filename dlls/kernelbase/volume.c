@@ -647,6 +647,16 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetDiskFreeSpaceExA( LPCSTR root, PULARGE_INTEGER 
 }
 
 
+static ULONGLONG clamp_clusters_for_32bit( ULONGLONG clusters, UINT units )
+{
+    ULONGLONG bytes = clusters * units, target;
+
+    if (bytes <= 0x7fffffff) return clusters;
+    target = (bytes & ~(ULONGLONG)0xffffffff) | 0x7fff0000;
+    if (target > bytes) target -= 0x100000000ull;
+    return target / units;
+}
+
 /***********************************************************************
  *           GetDiskFreeSpaceW   (kernelbase.@)
  */
@@ -684,6 +694,15 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetDiskFreeSpaceW( LPCWSTR root, LPDWORD cluster_s
             info.AvailableAllocationUnits.QuadPart /= 2;
             info.SectorsPerAllocationUnit *= 2;
         }
+    }
+    else if (units && !(0x80000000 % units))
+    {
+        /* Old installers multiply clusters * sectors * bytes in 32 bits; on large
+         * disks the product wraps (often negative) and they report "not enough
+         * space". Round the counts down so the low 32 bits of the byte count are
+         * just under 2GB; 64-bit callers still see nearly the real size. */
+        info.AvailableAllocationUnits.QuadPart = clamp_clusters_for_32bit( info.AvailableAllocationUnits.QuadPart, units );
+        info.TotalAllocationUnits.QuadPart = clamp_clusters_for_32bit( info.TotalAllocationUnits.QuadPart, units );
     }
 
     if (cluster_sectors) *cluster_sectors = info.SectorsPerAllocationUnit;
