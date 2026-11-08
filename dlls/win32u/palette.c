@@ -227,7 +227,9 @@ BOOL WINAPI NtGdiResizePalette( HPALETTE hPal, UINT count )
     if( !palPtr ) return FALSE;
     TRACE("hpal = %p, prev = %i, new = %i\n", hPal, palPtr->count, count );
 
-    if (!(entries = realloc( palPtr->entries, count * sizeof(*palPtr->entries) )))
+    /* the entry count is a WORD; a game passing -1 must not allocate 16 GB */
+    if (!count || count > 0xffff ||
+        !(entries = realloc( palPtr->entries, count * sizeof(*palPtr->entries) )))
     {
         GDI_ReleaseObj( hPal );
         return FALSE;
