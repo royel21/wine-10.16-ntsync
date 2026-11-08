@@ -125,6 +125,33 @@ static inline void *unsafe_ptr_from_HLOCAL( HLOCAL handle )
     return handle;
 }
 
+/* must match the fixed block padding in kernelbase LocalAlloc */
+#define FIXED_MEM_PAD        8
+#define FIXED_MEM_PAD_MAGIC  0x44415046  /* "FPAD" */
+
+static void *padded_fixed_base( HANDLE heap, const void *ptr )
+{
+    static int fixed_mem_padding = -1;
+    DWORD *base = (DWORD *)((char *)ptr - FIXED_MEM_PAD);
+    MEMORY_BASIC_INFORMATION info;
+    BOOL padded;
+
+    if (fixed_mem_padding < 0)
+    {
+        WCHAR buffer[4];
+        fixed_mem_padding = GetEnvironmentVariableW( L"WINE_FIXED_MEM_PADDING", buffer, ARRAY_SIZE(buffer) ) &&
+                            buffer[0] != '0';
+    }
+    if (!fixed_mem_padding || !ptr) return NULL;
+    /* check the pad is readable instead of catching a fault, faults are slow and fragile under emulators */
+    if (VirtualQuery( base, &info, sizeof(info) ) != sizeof(info) || info.State != MEM_COMMIT ||
+        (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) || !(info.Protect & 0xff))
+        return NULL;
+    padded = *base == FIXED_MEM_PAD_MAGIC;
+    if (!padded || !HeapValidate( heap, HEAP_NO_SERIALIZE, base )) return NULL;
+    return base;
+}
+
 
 /***********************************************************************
  *           GlobalLock   (KERNEL32.@)
@@ -346,6 +373,7 @@ HLOCAL WINAPI LocalHandle( const void *ptr )
 {
     HANDLE heap = GetProcessHeap();
     HLOCAL handle = (HANDLE)ptr;
+    void *base;
     ULONG flags;
 
     TRACE_(globalmem)( "ptr %p\n", ptr );
@@ -357,6 +385,7 @@ HLOCAL WINAPI LocalHandle( const void *ptr )
     }
 
     RtlLockHeap( heap );
+    if ((base = padded_fixed_base( heap, ptr ))) ptr = base;
     if (!HeapValidate( heap, HEAP_NO_SERIALIZE, ptr ) ||
         !RtlGetUserInfoHeap( heap, HEAP_NO_SERIALIZE, (void *)ptr, &handle, &flags ))
     {
@@ -390,7 +419,11 @@ SIZE_T WINAPI LocalSize( HLOCAL handle )
     TRACE_(globalmem)( "handle %p\n", handle );
 
     RtlLockHeap( heap );
-    if ((ptr = unsafe_ptr_from_HLOCAL( handle )) &&
+    if ((ptr = unsafe_ptr_from_HLOCAL( handle )) && (ptr = padded_fixed_base( heap, ptr )))
+    {
+        if ((ret = HeapSize( heap, HEAP_NO_SERIALIZE, ptr )) != ~(SIZE_T)0) ret -= FIXED_MEM_PAD;
+    }
+    else if ((ptr = unsafe_ptr_from_HLOCAL( handle )) &&
         HeapValidate( heap, HEAP_NO_SERIALIZE, ptr ))
         ret = HeapSize( heap, HEAP_NO_SERIALIZE, ptr );
     else if ((mem = unsafe_mem_from_HLOCAL( handle )))

@@ -1020,8 +1020,35 @@ static inline void *unsafe_ptr_from_HLOCAL( HLOCAL handle )
     return handle;
 }
 
+/* Some old games write just before their fixed blocks, over the heap header. With
+ * WINE_FIXED_MEM_PADDING set, fixed blocks get a marked pad in front that absorbs it. */
+#define FIXED_MEM_PAD        8
+#define FIXED_MEM_PAD_MAGIC  0x44415046  /* "FPAD" */
+static BOOL fixed_mem_padding;
+
+static void *padded_fixed_base( HANDLE heap, const void *ptr )
+{
+    DWORD *base = (DWORD *)((char *)ptr - FIXED_MEM_PAD);
+    MEMORY_BASIC_INFORMATION info;
+    BOOL padded;
+
+    if (!fixed_mem_padding || !ptr) return NULL;
+    /* check the pad is readable instead of catching a fault, faults are slow and fragile under emulators */
+    if (VirtualQuery( base, &info, sizeof(info) ) != sizeof(info) || info.State != MEM_COMMIT ||
+        (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) || !(info.Protect & 0xff))
+        return NULL;
+    padded = *base == FIXED_MEM_PAD_MAGIC;
+    if (!padded || !HeapValidate( heap, HEAP_NO_SERIALIZE, base )) return NULL;
+    return base;
+}
+
 void init_global_data(void)
 {
+    WCHAR buffer[4];
+
+    if (GetEnvironmentVariableW( L"WINE_FIXED_MEM_PADDING", buffer, ARRAY_SIZE(buffer) ) && buffer[0] != '0')
+        fixed_mem_padding = TRUE;
+
     global_data.mem_entries = VirtualAlloc( NULL, MAX_MEM_HANDLES * sizeof(struct mem_entry), MEM_COMMIT, PAGE_READWRITE );
     if (!(next_free_mem = global_data.mem_entries)) ERR( "Failed to allocate kernelbase global handle table\n" );
     global_data.mem_entries_end = global_data.mem_entries + MAX_MEM_HANDLES;
@@ -1081,6 +1108,19 @@ HLOCAL WINAPI DECLSPEC_HOTPATCH LocalAlloc( UINT flags, SIZE_T size )
 
     if (flags & LMEM_ZEROINIT) heap_flags |= HEAP_ZERO_MEMORY;
 
+    if (!(flags & LMEM_MOVEABLE) && fixed_mem_padding)
+    {
+        DWORD *base = HeapAlloc( heap, heap_flags, size + FIXED_MEM_PAD );
+
+        if (!base) return NULL;
+        base[0] = FIXED_MEM_PAD_MAGIC;
+        base[1] = 0;
+        ptr = (char *)base + FIXED_MEM_PAD;
+        RtlSetUserValueHeap( heap, heap_flags, base, ptr );
+        TRACE_(globalmem)( "return %p (padded)\n", ptr );
+        return ptr;
+    }
+
     if (!(flags & LMEM_MOVEABLE)) /* pointer */
     {
         ptr = HeapAlloc( heap, heap_flags, size );
@@ -1139,7 +1179,12 @@ HLOCAL WINAPI DECLSPEC_HOTPATCH LocalFree( HLOCAL handle )
     TRACE_(globalmem)( "handle %p\n", handle );
 
     RtlLockHeap( heap );
-    if ((ptr = unsafe_ptr_from_HLOCAL( handle )) &&
+    if ((ptr = unsafe_ptr_from_HLOCAL( handle )) && (ptr = padded_fixed_base( heap, ptr )))
+    {
+        *(DWORD *)ptr = 0;
+        if (HeapFree( heap, HEAP_NO_SERIALIZE, ptr )) ret = 0;
+    }
+    else if ((ptr = unsafe_ptr_from_HLOCAL( handle )) &&
         HeapValidate( heap, HEAP_NO_SERIALIZE, ptr ))
     {
         if (HeapFree( heap, HEAP_NO_SERIALIZE, ptr )) ret = 0;
@@ -1222,7 +1267,22 @@ HLOCAL WINAPI DECLSPEC_HOTPATCH LocalReAlloc( HLOCAL handle, SIZE_T size, UINT f
     if (flags & LMEM_ZEROINIT) heap_flags |= HEAP_ZERO_MEMORY;
 
     RtlLockHeap( heap );
-    if ((ptr = unsafe_ptr_from_HLOCAL( handle )) &&
+    if ((ptr = unsafe_ptr_from_HLOCAL( handle )) && (ptr = padded_fixed_base( heap, ptr )))
+    {
+        if (flags & LMEM_MODIFY) ret = handle;
+        else if (flags & LMEM_DISCARDABLE) SetLastError( ERROR_INVALID_PARAMETER );
+        else
+        {
+            if (!(flags & LMEM_MOVEABLE)) heap_flags |= HEAP_REALLOC_IN_PLACE_ONLY;
+            if ((ptr = HeapReAlloc( heap, heap_flags, ptr, size + FIXED_MEM_PAD )))
+            {
+                ret = (char *)ptr + FIXED_MEM_PAD;
+                RtlSetUserValueHeap( heap, heap_flags, ptr, ret );
+            }
+            else SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+        }
+    }
+    else if ((ptr = unsafe_ptr_from_HLOCAL( handle )) &&
         HeapValidate( heap, HEAP_NO_SERIALIZE, ptr ))
     {
         if (flags & LMEM_MODIFY) ret = handle;

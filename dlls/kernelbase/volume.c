@@ -39,6 +39,7 @@
 #include "ddk/wdm.h"
 #include "kernelbase.h"
 #include "wine/debug.h"
+#include "winreg.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(volume);
 
