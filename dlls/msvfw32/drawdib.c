@@ -42,6 +42,7 @@ typedef struct tagWINE_HDD {
     INT                 dxSrc;
     INT                 dySrc;
     HPALETTE            hpal;		/* Palette to use for the DIB */
+    HPALETTE            own_hpal;	/* Palette created by DrawDibRealize */
     BOOL                begun;		/* DrawDibBegin has been called */
     LPBITMAPINFOHEADER  lpbiOut;	/* Output format */
     HIC                 hic;		/* HIC for decompression */
@@ -132,6 +133,7 @@ BOOL VFWAPI DrawDibClose(HDRAWDIB hdd)
     if (!whdd) return FALSE;
 
     if (whdd->begun) DrawDibEnd(hdd);
+    if (whdd->own_hpal) DeleteObject(whdd->own_hpal);
 
     for (p = &HDD_FirstHdd; *p != NULL; p = &((*p)->next))
     {
@@ -540,7 +542,7 @@ UINT VFWAPI DrawDibRealize(HDRAWDIB hdd, HDC hdc, BOOL fBackground)
     WINE_HDD* whdd;
     UINT ret = 0;
 
-    FIXME("(%p, %p, %d), stub\n", hdd, hdc, fBackground);
+    TRACE("(%p, %p, %d)\n", hdd, hdc, fBackground);
 
     whdd = MSVIDEO_GetHddPtr(hdd);
     if (!whdd) return FALSE;
@@ -552,7 +554,27 @@ UINT VFWAPI DrawDibRealize(HDRAWDIB hdd, HDC hdc, BOOL fBackground)
     }
 
     if (!whdd->hpal)
-        whdd->hpal = CreateHalftonePalette(hdc);
+    {
+        /* use a halftone palette with the entries set by DrawDibChangePalette,
+         * created once per DrawDib and reused by the following DrawDibBegin calls */
+        if (!whdd->own_hpal) whdd->own_hpal = CreateHalftonePalette(hdc);
+        if (whdd->own_hpal)
+        {
+            PALETTEENTRY entry;
+            int i;
+
+            for (i = 0; i < 256; i++)
+            {
+                if (!whdd->color_set[i]) continue;
+                entry.peRed = whdd->colors[i].rgbRed;
+                entry.peGreen = whdd->colors[i].rgbGreen;
+                entry.peBlue = whdd->colors[i].rgbBlue;
+                entry.peFlags = 0;
+                SetPaletteEntries(whdd->own_hpal, i, 1, &entry);
+            }
+        }
+        whdd->hpal = whdd->own_hpal;
+    }
 
     SelectPalette(hdc, whdd->hpal, fBackground);
     ret = RealizePalette(hdc);
