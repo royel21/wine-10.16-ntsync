@@ -1586,6 +1586,10 @@ static BOOL append_entry( struct dir_data *data, const char *long_name,
     WCHAR long_nameW[MAX_DIR_ENTRY_LEN + 1];
     WCHAR short_nameW[13];
 
+    /* files that hold the volume label and serial of a drive aren't on the Windows volume,
+     * some old games check the date of the first entry of a CD's root directory */
+    if (!strcmp( long_name, ".windows-label" ) || !strcmp( long_name, ".windows-serial" )) return TRUE;
+
     long_len = ntdll_umbstowcs( long_name, strlen(long_name), long_nameW, ARRAY_SIZE(long_nameW) );
     if (long_len == ARRAY_SIZE(long_nameW)) return TRUE;
     long_nameW[long_len] = 0;
