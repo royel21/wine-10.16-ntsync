@@ -175,7 +175,7 @@ static void mp3_horse(mpg123_handle *handle, const unsigned char *src,
 static LRESULT MPEG3_StreamOpen(ACMDRVSTREAMINSTANCE *instance)
 {
     mpg123_handle *handle;
-    int err;
+    int err, down_sample;
 
     assert(!(instance->fdwOpen & ACM_STREAMOPENF_ASYNC));
 
@@ -199,13 +199,19 @@ static LRESULT MPEG3_StreamOpen(ACMDRVSTREAMINSTANCE *instance)
             return ACMERR_NOTPOSSIBLE;
     }
 
-    if (instance->pwfxSrc->nSamplesPerSec != instance->pwfxDst->nSamplesPerSec
-            || instance->pwfxSrc->nChannels != instance->pwfxDst->nChannels
+    /* like the native codec, decode at the source rate or at a half or a quarter of it */
+    if (instance->pwfxSrc->nSamplesPerSec == instance->pwfxDst->nSamplesPerSec) down_sample = 0;
+    else if (instance->pwfxSrc->nSamplesPerSec == instance->pwfxDst->nSamplesPerSec * 2) down_sample = 1;
+    else if (instance->pwfxSrc->nSamplesPerSec == instance->pwfxDst->nSamplesPerSec * 4) down_sample = 2;
+    else return MMSYSERR_NOTSUPPORTED;
+
+    if (instance->pwfxSrc->nChannels != instance->pwfxDst->nChannels
             || instance->pwfxDst->wBitsPerSample != 16)
         return MMSYSERR_NOTSUPPORTED;
 
     handle = mpg123_new(NULL, &err);
     instance->dwDriver = (DWORD_PTR)handle;
+    if (down_sample) mpg123_param(handle, MPG123_DOWN_SAMPLE, down_sample, 0);
     mpg123_open_feed(handle);
 
     /* mpg123 may find a XING header in the mp3 and use that information
