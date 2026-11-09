@@ -2128,7 +2128,66 @@ static NTSTATUS server_get_name_info( HANDLE handle, FILE_NAME_INFORMATION *info
 }
 
 
-static NTSTATUS get_full_size_info(int fd, FILE_FS_FULL_SIZE_INFORMATION *info) {
+static NTSTATUS get_mountmgr_fs_info( HANDLE handle, int fd, struct mountmgr_unix_drive *drive, ULONG size );
+
+/* total size of the files below a directory, in whole CD sectors; takes ownership of dir_fd */
+static ULONGLONG get_dir_tree_size( int dir_fd, int depth )
+{
+    ULONGLONG total = 2048;
+    struct dirent *de;
+    struct stat st;
+    DIR *dir;
+    int fd;
+
+    if (depth > 32 || !(dir = fdopendir( dir_fd )))
+    {
+        close( dir_fd );
+        return total;
+    }
+    while ((de = readdir( dir )))
+    {
+        if (!strcmp( de->d_name, "." ) || !strcmp( de->d_name, ".." )) continue;
+        if (fstatat( dirfd( dir ), de->d_name, &st, 0 ) < 0) continue;
+        if (S_ISDIR( st.st_mode ))
+        {
+            if ((fd = openat( dirfd( dir ), de->d_name, O_RDONLY | O_DIRECTORY )) != -1)
+                total += get_dir_tree_size( fd, depth + 1 );
+        }
+        else if (S_ISREG( st.st_mode ))
+            total += (st.st_size + 2047) & ~(ULONGLONG)2047;
+    }
+    closedir( dir );
+    return total;
+}
+
+/* A CD-ROM drive can be a plain directory holding the files of a disc image.
+ * Report it like a real disc: the size of its files and no free space,
+ * instead of the size of the host filesystem. */
+static void get_cdrom_dir_size_info( HANDLE handle, int fd, FILE_FS_FULL_SIZE_INFORMATION *info )
+{
+    struct mountmgr_unix_drive drive;
+    ULONGLONG size;
+    char *path;
+    int dir_fd;
+
+    if (!info->CallerAvailableAllocationUnits.QuadPart) return;  /* read-only, a real disc */
+    if (get_mountmgr_fs_info( handle, fd, &drive, sizeof(drive) )) return;
+    if (drive.type != 5 /* DRIVE_CDROM */ || drive.letter < 'a' || drive.letter > 'z') return;
+    if (!(path = malloc( strlen( config_dir ) + sizeof("/dosdevices/a:") ))) return;
+    sprintf( path, "%s/dosdevices/%c:", config_dir, (char)drive.letter );
+    dir_fd = open( path, O_RDONLY | O_DIRECTORY );
+    free( path );
+    if (dir_fd == -1) return;
+
+    size = get_dir_tree_size( dir_fd, 0 );
+    info->BytesPerSector = 2048;
+    info->SectorsPerAllocationUnit = 1;
+    info->TotalAllocationUnits.QuadPart = size / 2048;
+    info->CallerAvailableAllocationUnits.QuadPart = 0;
+    info->ActualAvailableAllocationUnits.QuadPart = 0;
+}
+
+static NTSTATUS get_full_size_info(HANDLE handle, int fd, FILE_FS_FULL_SIZE_INFORMATION *info) {
     struct stat st;
     ULONGLONG bsize;
 
@@ -2162,15 +2221,16 @@ static NTSTATUS get_full_size_info(int fd, FILE_FS_FULL_SIZE_INFORMATION *info) 
     info->TotalAllocationUnits.QuadPart = bsize * stfs.f_blocks / (info->BytesPerSector * info->SectorsPerAllocationUnit);
     info->CallerAvailableAllocationUnits.QuadPart = bsize * stfs.f_bavail / (info->BytesPerSector * info->SectorsPerAllocationUnit);
     info->ActualAvailableAllocationUnits.QuadPart = bsize * stfs.f_bfree / (info->BytesPerSector * info->SectorsPerAllocationUnit);
+    get_cdrom_dir_size_info( handle, fd, info );
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS get_full_size_info_ex(int fd, FILE_FS_FULL_SIZE_INFORMATION_EX *info)
+static NTSTATUS get_full_size_info_ex(HANDLE handle, int fd, FILE_FS_FULL_SIZE_INFORMATION_EX *info)
 {
     FILE_FS_FULL_SIZE_INFORMATION full_info;
     NTSTATUS status;
 
-    if ((status = get_full_size_info(fd, &full_info)) != STATUS_SUCCESS)
+    if ((status = get_full_size_info(handle, fd, &full_info)) != STATUS_SUCCESS)
         return status;
 
     info->ActualTotalAllocationUnits = full_info.TotalAllocationUnits.QuadPart;
@@ -7027,7 +7087,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
             FILE_FS_SIZE_INFORMATION *info = buffer;
             FILE_FS_FULL_SIZE_INFORMATION full_info;
 
-            if ((status = get_full_size_info(fd, &full_info)) == STATUS_SUCCESS)
+            if ((status = get_full_size_info(handle, fd, &full_info)) == STATUS_SUCCESS)
             {
                 info->TotalAllocationUnits = full_info.TotalAllocationUnits;
                 info->AvailableAllocationUnits = full_info.CallerAvailableAllocationUnits;
@@ -7182,7 +7242,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         else
         {
             FILE_FS_FULL_SIZE_INFORMATION *info = buffer;
-            if ((status = get_full_size_info(fd, info)) == STATUS_SUCCESS)
+            if ((status = get_full_size_info(handle, fd, info)) == STATUS_SUCCESS)
                 io->Information = sizeof(*info);
         }
         break;
@@ -7193,7 +7253,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         else
         {
             FILE_FS_FULL_SIZE_INFORMATION_EX *info = buffer;
-            if ((status = get_full_size_info_ex(fd, info)) == STATUS_SUCCESS)
+            if ((status = get_full_size_info_ex(handle, fd, info)) == STATUS_SUCCESS)
                 io->Information = sizeof(*info);
         }
         break;
