@@ -5494,6 +5494,18 @@ static void fix_cs_coordinates( CREATESTRUCTW *cs, INT *sw )
         RTL_USER_PROCESS_PARAMETERS *params = NtCurrentTeb()->Peb->ProcessParameters;
         MONITORINFO mon_info;
 
+        /* A position outside the range of window coordinates, for example from
+         * centering a window bigger than the screen with unsigned math, would
+         * leave the window far off screen; put it at the top left of the work
+         * area instead. */
+        if (!is_default_coord( cs->x ) &&
+            (cs->x < -32768 || cs->x > 32767 || cs->y < -32768 || cs->y > 32767))
+        {
+            mon_info = monitor_info_from_window( cs->hwndParent, MONITOR_DEFAULTTOPRIMARY );
+            cs->x = mon_info.rcWork.left;
+            cs->y = mon_info.rcWork.top;
+        }
+
         if (!is_default_coord( cs->x ) && !is_default_coord( cs->cx ) && !is_default_coord( cs->cy ))
             return;
 
