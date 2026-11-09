@@ -2747,7 +2747,11 @@ DWORD WINAPI NtUserDrawMenuBarTemp( HWND hwnd, HDC hdc, RECT *rect, HMENU handle
 
     prev_font = NtGdiSelectFont( hdc, font );
 
-    if (!menu->Height) calc_menu_bar_size( hdc, rect, menu, hwnd );
+    /* the same menu can be the menu bar of several windows, lay it out again
+     * when it was last placed somewhere else */
+    if (!menu->Height || menu->items_rect.left != rect->left || menu->items_rect.top != rect->top ||
+        menu->items_rect.right - menu->items_rect.left != rect->right - rect->left)
+        calc_menu_bar_size( hdc, rect, menu, hwnd );
 
     rect->bottom = rect->top + menu->Height;
 
