@@ -1812,6 +1812,31 @@ static BOOL is_image_drive( const struct disk_device *dev )
     return FALSE;
 }
 
+/* plain reads of a drive backed by a disc image return the data sectors of the image */
+static NTSTATUS WINAPI harddisk_read(DEVICE_OBJECT* device, IRP* irp)
+{
+    IO_STACK_LOCATION* irpsp = IoGetCurrentIrpStackLocation(irp);
+    struct disk_device* dev = device->DeviceExtension;
+    NTSTATUS status = STATUS_INVALID_DEVICE_REQUEST;
+    ULONG_PTR info = 0;
+    void* out;
+
+    EnterCriticalSection(&device_section);
+    if (is_image_drive(dev))
+    {
+        out = irp->MdlAddress ? MmGetSystemAddressForMdlSafe(irp->MdlAddress, NormalPagePriority)
+            : irp->AssociatedIrp.SystemBuffer ? irp->AssociatedIrp.SystemBuffer : irp->UserBuffer;
+        if (out) status = image_cd_read(irpsp->Parameters.Read.ByteOffset.QuadPart, out,
+                                        irpsp->Parameters.Read.Length, &info);
+    }
+    LeaveCriticalSection(&device_section);
+
+    irp->IoStatus.Information = info;
+    irp->IoStatus.Status = status;
+    IoCompleteRequest(irp, IO_NO_INCREMENT);
+    return status;
+}
+
 /* handler for ioctls on the harddisk device */
 static NTSTATUS WINAPI harddisk_ioctl( DEVICE_OBJECT *device, IRP *irp )
 {
@@ -1949,6 +1974,7 @@ NTSTATUS WINAPI harddisk_driver_entry( DRIVER_OBJECT *driver, UNICODE_STRING *pa
 
     harddisk_driver = driver;
     driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = harddisk_ioctl;
+    driver->MajorFunction[IRP_MJ_READ] = harddisk_read;
     driver->MajorFunction[IRP_MJ_QUERY_VOLUME_INFORMATION] = harddisk_query_volume;
 
     /* create a harddisk0 device that isn't assigned to any drive */

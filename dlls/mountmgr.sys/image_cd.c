@@ -8,6 +8,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -203,6 +204,73 @@ static NTSTATUS raw_read( const RAW_READ_INFO *request, void *out, ULONG out_len
 
     if (file) fclose( file );
     *info = buffer - (BYTE *)out;
+    return status;
+}
+
+/* where the user data starts in a sector of a track */
+static ULONG data_offset( const CDTrack *track )
+{
+    if (track->sectorSize == 2048) return 0;
+    if (!strncmp( track->mode, "MODE2", 5 )) return track->sectorSize == 2336 ? 8 : 24;
+    return 16;
+}
+
+NTSTATUS image_cd_read( ULONGLONG offset, void *out, ULONG len, ULONG_PTR *info )
+{
+    LONG lba = offset / 2048;
+    const WCHAR *open_path = NULL;
+    BYTE *buffer = out;
+    FILE *file = NULL;
+    NTSTATUS status = STATUS_SUCCESS;
+    ULONG i;
+    int t;
+
+    *info = 0;
+    if (!refresh_disc()) return STATUS_NO_MEDIA_IN_DEVICE;
+    if (offset % 2048 || len % 2048) return STATUS_INVALID_PARAMETER;
+
+    for (i = 0; i < len / 2048; i++, lba++)
+    {
+        const CDTrack *track = NULL;
+
+        for (t = 0; t < disc.trackCount; t++)
+        {
+            if (lba >= disc.tracks[t].startLBA && lba < disc.tracks[t].endLBA)
+            {
+                track = &disc.tracks[t];
+                break;
+            }
+        }
+        if (!track || track->isAudio)
+        {
+            if (!i) status = track ? STATUS_INVALID_DEVICE_REQUEST : STATUS_END_OF_FILE;
+            break;
+        }
+
+        if (!open_path || wcscmp( open_path, track->filePath ))
+        {
+            if (file) fclose( file );
+            open_path = track->filePath;
+            if (!(file = _wfopen( open_path, L"rb" )))
+            {
+                status = STATUS_DEVICE_DATA_ERROR;
+                break;
+            }
+        }
+
+        if (_fseeki64( file, track->fileOffset + (ULONGLONG)(lba - track->startLBA) * track->sectorSize +
+                       data_offset( track ), SEEK_SET ) ||
+            fread( buffer, 1, 2048, file ) != 2048)
+        {
+            status = STATUS_DEVICE_DATA_ERROR;
+            break;
+        }
+        buffer += 2048;
+    }
+
+    if (file) fclose( file );
+    *info = buffer - (BYTE *)out;
+    TRACE( "offset %s len %lu -> %#lx, %Iu bytes\n", wine_dbgstr_longlong(offset), len, status, *info );
     return status;
 }
 

@@ -9,4 +9,7 @@
 extern BOOL image_cd_ioctl( ULONG code, const void *in, ULONG in_len, void *out, ULONG out_len,
                             NTSTATUS *status, ULONG_PTR *info );
 
+/* reads the 2048 byte user data of the data sectors at a byte offset of the disc */
+extern NTSTATUS image_cd_read( ULONGLONG offset, void *out, ULONG len, ULONG_PTR *info );
+
 #endif
