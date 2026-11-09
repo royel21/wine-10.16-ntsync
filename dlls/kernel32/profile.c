@@ -64,6 +64,7 @@ typedef struct
     PROFILESECTION  *section;
     WCHAR           *filename;
     FILETIME LastWriteTime;
+    ULONGLONG file_id;     /* volume serial and file index, a file with the same name can be another file */
     ENCODING encoding;
 } PROFILE;
 
@@ -637,6 +638,15 @@ static PROFILEKEY *PROFILE_Find( PROFILESECTION **section, LPCWSTR section_name,
  *
  * Flush the current profile to disk if changed.
  */
+static ULONGLONG get_file_id( HANDLE file )
+{
+    BY_HANDLE_FILE_INFORMATION info;
+
+    if (!GetFileInformationByHandle( file, &info )) return 0;
+    return ((ULONGLONG)info.dwVolumeSerialNumber << 32) ^
+           ((ULONGLONG)info.nFileIndexHigh << 32 | info.nFileIndexLow);
+}
+
 static BOOL PROFILE_FlushFile(void)
 {
     HANDLE hFile = NULL;
@@ -663,6 +673,7 @@ static BOOL PROFILE_FlushFile(void)
     PROFILE_Save( hFile, CurProfile->section, CurProfile->encoding );
     if(GetFileTime(hFile, NULL, NULL, &LastWriteTime))
        CurProfile->LastWriteTime=LastWriteTime;
+    CurProfile->file_id = get_file_id( hFile );
     CloseHandle( hFile );
     CurProfile->changed = FALSE;
     return TRUE;
@@ -684,6 +695,7 @@ static void PROFILE_ReleaseFile(void)
     CurProfile->filename  = NULL;
     CurProfile->encoding = ENCODING_ANSI;
     ZeroMemory(&CurProfile->LastWriteTime, sizeof(CurProfile->LastWriteTime));
+    CurProfile->file_id = 0;
 }
 
 /***********************************************************************
@@ -733,6 +745,7 @@ static BOOL PROFILE_Open( LPCWSTR filename, BOOL write_access )
           MRUProfile[i]->filename=NULL;
           MRUProfile[i]->encoding=ENCODING_ANSI;
           ZeroMemory(&MRUProfile[i]->LastWriteTime, sizeof(FILETIME));
+          MRUProfile[i]->file_id = 0;
        }
 
     if (!filename)
@@ -781,9 +794,11 @@ static BOOL PROFILE_Open( LPCWSTR filename, BOOL write_access )
 
             if (hFile != INVALID_HANDLE_VALUE)
             {
+                ULONGLONG file_id = get_file_id( hFile );
+
                 GetFileTime(hFile, NULL, NULL, &LastWriteTime);
                 if (!memcmp( &CurProfile->LastWriteTime, &LastWriteTime, sizeof(FILETIME) ) &&
-                    is_not_current(&LastWriteTime))
+                    CurProfile->file_id == file_id && is_not_current(&LastWriteTime))
                     TRACE("(%s): already opened (mru=%d)\n",
                           debugstr_w(buffer), i);
                 else
@@ -793,6 +808,7 @@ static BOOL PROFILE_Open( LPCWSTR filename, BOOL write_access )
                     PROFILE_Free(CurProfile->section);
                     CurProfile->section = PROFILE_Load(hFile, &CurProfile->encoding);
                     CurProfile->LastWriteTime = LastWriteTime;
+                    CurProfile->file_id = file_id;
                 }
                 CloseHandle(hFile);
                 return TRUE;
@@ -823,6 +839,7 @@ static BOOL PROFILE_Open( LPCWSTR filename, BOOL write_access )
     {
         CurProfile->section = PROFILE_Load(hFile, &CurProfile->encoding);
         GetFileTime(hFile, NULL, NULL, &CurProfile->LastWriteTime);
+        CurProfile->file_id = get_file_id( hFile );
         CloseHandle(hFile);
     }
     else
