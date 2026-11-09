@@ -1038,7 +1038,12 @@ static BOOL X11DRV_MapNotify( HWND hwnd, XEvent *event )
     {
         HWND hwndFocus = get_focus();
         if (hwndFocus && NtUserIsChild( hwnd, hwndFocus ))
+        {
             set_input_focus( data );
+            release_win_data( data );
+            raise_owned_popups( hwnd );
+            return TRUE;
+        }
     }
     release_win_data( data );
     return TRUE;
@@ -1349,7 +1354,14 @@ void X11DRV_ActivateWindow( HWND hwnd, HWND previous )
     if (!is_virtual_desktop()) set_net_active_window( hwnd, previous );
 
     if (!(data = get_win_data( hwnd ))) return;
-    if (!data->managed || data->embedder) set_input_focus( data );
+    if (!data->managed || data->embedder)
+    {
+        set_input_focus( data );
+        release_win_data( data );
+        /* set_input_focus raised the window, put its owned popups back above it */
+        raise_owned_popups( hwnd );
+        return;
+    }
     release_win_data( data );
 }
 
