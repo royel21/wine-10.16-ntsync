@@ -149,6 +149,15 @@ static COLORREF make_rgb_colorref( DC *dc, const dib_info *dib, COLORREF color,
     {
         PALETTEENTRY pal_ent;
 
+        /* a DIB section created with DIB_PAL_COLORS holds palette indices, use the index as is */
+        if (dib->pal_colors && LOWORD(color) < dib->color_table_size)
+        {
+            const RGBQUAD *entry = dib->color_table + LOWORD(color);
+            *got_pixel = TRUE;
+            *pixel = LOWORD(color);
+            return RGB( entry->rgbRed, entry->rgbGreen, entry->rgbBlue );
+        }
+
         if (!get_palette_entries( dc->hPalette, LOWORD(color), 1, &pal_ent ))
             get_palette_entries( dc->hPalette, 0, 1, &pal_ent );
         return RGB( pal_ent.peRed, pal_ent.peGreen, pal_ent.peBlue );

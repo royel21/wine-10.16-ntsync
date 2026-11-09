@@ -139,6 +139,7 @@ typedef struct tagBITMAPOBJ
     DIBSECTION            dib;
     SIZE                  size;   /* For SetBitmapDimension() */
     RGBQUAD              *color_table;  /* DIB color table if <= 8bpp (always 1 << bpp in size) */
+    BOOL                  pal_colors;   /* DIB section created with DIB_PAL_COLORS */
 } BITMAPOBJ;
 
 static inline BOOL is_bitmapobj_dib( const BITMAPOBJ *bmp )

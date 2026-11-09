@@ -155,6 +155,7 @@ static void init_dib_info(dib_info *dib, const BITMAPINFOHEADER *bi, int stride,
         dib->color_table = NULL;
         dib->color_table_size = 0;
     }
+    dib->pal_colors = FALSE;
 }
 
 void init_dib_info_from_bitmapinfo(dib_info *dib, const BITMAPINFO *info, void *bits)
@@ -175,8 +176,12 @@ BOOL init_dib_info_from_bitmapobj(dib_info *dib, BITMAPOBJ *bmp)
         get_ddb_bitmapinfo( bmp, &info );
         init_dib_info_from_bitmapinfo( dib, &info, bmp->dib.dsBm.bmBits );
     }
-    else init_dib_info( dib, &bmp->dib.dsBmih, bmp->dib.dsBm.bmWidthBytes,
-                        bmp->dib.dsBitfields, bmp->color_table, bmp->dib.dsBm.bmBits );
+    else
+    {
+        init_dib_info( dib, &bmp->dib.dsBmih, bmp->dib.dsBm.bmWidthBytes,
+                       bmp->dib.dsBitfields, bmp->color_table, bmp->dib.dsBm.bmBits );
+        dib->pal_colors = bmp->pal_colors && dib->color_table;
+    }
     return TRUE;
 }
 
@@ -213,6 +218,7 @@ void copy_dib_color_info(dib_info *dst, const dib_info *src)
     dst->funcs            = src->funcs;
     dst->color_table_size = src->color_table_size;
     dst->color_table      = src->color_table;
+    dst->pal_colors       = src->pal_colors;
 }
 
 DWORD convert_bitmapinfo( const BITMAPINFO *src_info, void *src_bits, struct bitblt_coords *src,

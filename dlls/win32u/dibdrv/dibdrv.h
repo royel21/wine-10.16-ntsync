@@ -32,6 +32,7 @@ typedef struct
 
     const RGBQUAD *color_table;
     DWORD color_table_size;
+    BOOL pal_colors; /* palette indices are pixel values (DIB section created with DIB_PAL_COLORS) */
 
     const struct primitive_funcs *funcs;
 } dib_info;

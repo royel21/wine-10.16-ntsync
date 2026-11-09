@@ -1507,6 +1507,7 @@ HBITMAP WINAPI NtGdiCreateDIBSection( HDC hdc, HANDLE section, DWORD offset, con
     {
         if (usage == DIB_PAL_COLORS && !fill_color_table_from_pal_colors( info, hdc ))
             goto error;
+        bmp->pal_colors = (usage == DIB_PAL_COLORS);
         bmp->dib.dsBmih.biClrUsed = info->bmiHeader.biClrUsed;
         if (!(bmp->color_table = malloc( bmp->dib.dsBmih.biClrUsed * sizeof(RGBQUAD) )))
             goto error;
