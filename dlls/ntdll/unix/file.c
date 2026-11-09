@@ -257,6 +257,57 @@ static inline BOOL is_invalid_dos_char( WCHAR ch )
     return wcschr( invalid_chars, ch ) != NULL;
 }
 
+/* Handles of devices served by a driver have no unix fd to keep the file
+ * position in, so remember the position of the ones that set it here. */
+static struct
+{
+    HANDLE    handle;
+    ULONGLONG pos;
+} device_positions[16];
+static pthread_mutex_t device_pos_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static BOOL get_device_position( HANDLE handle, ULONGLONG *pos )
+{
+    BOOL ret = FALSE;
+    unsigned int i;
+
+    mutex_lock( &device_pos_mutex );
+    for (i = 0; i < ARRAY_SIZE(device_positions); i++)
+    {
+        if (device_positions[i].handle != handle) continue;
+        *pos = device_positions[i].pos;
+        ret = TRUE;
+        break;
+    }
+    mutex_unlock( &device_pos_mutex );
+    return ret;
+}
+
+static void set_device_position( HANDLE handle, ULONGLONG pos )
+{
+    unsigned int i, slot = 0;
+
+    mutex_lock( &device_pos_mutex );
+    for (i = 0; i < ARRAY_SIZE(device_positions); i++)
+    {
+        if (device_positions[i].handle == handle) { slot = i; break; }
+        if (!device_positions[i].handle) slot = i;
+    }
+    device_positions[slot].handle = handle;
+    device_positions[slot].pos = pos;
+    mutex_unlock( &device_pos_mutex );
+}
+
+void clear_device_position( HANDLE handle )
+{
+    unsigned int i;
+
+    mutex_lock( &device_pos_mutex );
+    for (i = 0; i < ARRAY_SIZE(device_positions); i++)
+        if (device_positions[i].handle == handle) device_positions[i].handle = 0;
+    mutex_unlock( &device_pos_mutex );
+}
+
 /* check if the device can be a mounted volume */
 static inline BOOL is_valid_mounted_device( const struct stat *st )
 {
@@ -4695,6 +4746,15 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
     if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, &options )))
     {
         if (status != STATUS_BAD_DEVICE_TYPE) return io->Status = status;
+        if (class == FilePositionInformation)
+        {
+            FILE_POSITION_INFORMATION *info = ptr;
+            ULONGLONG pos;
+
+            info->CurrentByteOffset.QuadPart = get_device_position( handle, &pos ) ? pos : 0;
+            io->Information = sizeof(*info);
+            return io->Status = STATUS_SUCCESS;
+        }
         return server_get_file_info( handle, io, ptr, len, class );
     }
 
@@ -4885,7 +4945,14 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             const FILE_POSITION_INFORMATION *info = ptr;
 
             if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
+            {
+                if (status == STATUS_BAD_DEVICE_TYPE)
+                {
+                    set_device_position( handle, info->CurrentByteOffset.QuadPart );
+                    status = STATUS_SUCCESS;
+                }
                 return io->Status = status;
+            }
 
             if (lseek( fd, info->CurrentByteOffset.QuadPart, SEEK_SET ) == (off_t)-1)
                 status = errno_to_status( errno );
@@ -5714,7 +5781,18 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
     if (!virtual_check_buffer_for_write( buffer, length )) return STATUS_ACCESS_VIOLATION;
 
     if (status == STATUS_BAD_DEVICE_TYPE)
+    {
+        LARGE_INTEGER pos;
+
+        /* reads without an offset continue from the device handle position */
+        if (!offset && get_device_position( handle, (ULONGLONG *)&pos.QuadPart ))
+        {
+            status = server_read_file( handle, event, apc, apc_user, io, buffer, length, &pos, key );
+            if (status == STATUS_SUCCESS) set_device_position( handle, pos.QuadPart + io->Information );
+            return status;
+        }
         return server_read_file( handle, event, apc, apc_user, io, buffer, length, offset, key );
+    }
 
     async_read = !(options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT));
 

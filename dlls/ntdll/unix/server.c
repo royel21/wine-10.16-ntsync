@@ -1989,6 +1989,7 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
     server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
 
     if (fd != -1) close( fd );
+    else clear_device_position( handle );
 
     if (ret != STATUS_INVALID_HANDLE || !handle) return ret;
     if (!peb->BeingDebugged) return ret;
