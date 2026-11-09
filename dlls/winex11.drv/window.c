@@ -356,6 +356,44 @@ static BOOL has_owned_popups( HWND hwnd )
     return ret;
 }
 
+/***********************************************************************
+ *              raise_owned_popups
+ *
+ * Owned popups are always above their owner on Windows. Some X servers without a window manager
+ * raise a window when it is clicked or focused and leave its owned popups hidden below it, so put
+ * the X windows of the visible popups back above their owner, keeping their Win32 order.
+ */
+void raise_owned_popups( HWND hwnd )
+{
+    struct x11drv_win_data *data;
+    HWND *list;
+    int i, count;
+
+    if (!(hwnd = NtUserGetAncestor( hwnd, GA_ROOT ))) return;
+    if (!(list = build_hwnd_list())) return;
+
+    /* the list is in Win32 z-order, top first, and popups are always above their owner */
+    for (count = 0; list[count] != HWND_BOTTOM; count++) if (list[count] == hwnd) break;
+
+    if (list[count] == hwnd)
+    {
+        for (i = count - 1; i >= 0; i--)
+        {
+            if (NtUserGetWindowRelative( list[i], GW_OWNER ) != hwnd) continue;
+            if (!(NtUserGetWindowLongW( list[i], GWL_STYLE ) & WS_VISIBLE)) continue;
+            if (!(data = get_win_data( list[i] ))) continue;
+            if (data->whole_window && !data->embedded)
+            {
+                TRACE( "raising %p/%lx above owner %p\n", list[i], data->whole_window, hwnd );
+                XRaiseWindow( data->display, data->whole_window );
+            }
+            release_win_data( data );
+        }
+    }
+
+    free( list );
+}
+
 /* returns the HWND for the X11 window, or the desktop window if it isn't a Wine window */
 static HWND hwnd_from_window( Display *display, Window window )
 {

@@ -866,6 +866,7 @@ static BOOL X11DRV_FocusIn( HWND hwnd, XEvent *xev )
     if (event->mode == NotifyGrab || event->mode == NotifyUngrab) return FALSE;
 
     xim_set_focus( hwnd, TRUE );
+    raise_owned_popups( hwnd );
 
     if (use_take_focus) return TRUE;
 

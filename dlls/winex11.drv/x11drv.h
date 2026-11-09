@@ -686,6 +686,7 @@ extern struct x11drv_win_data *get_win_data( HWND hwnd );
 extern void release_win_data( struct x11drv_win_data *data );
 extern void set_window_parent( struct x11drv_win_data *data, Window parent );
 extern Window X11DRV_get_whole_window( HWND hwnd );
+extern void raise_owned_popups( HWND hwnd );
 extern Window get_dummy_parent(void);
 
 extern BOOL window_is_reparenting( HWND hwnd );

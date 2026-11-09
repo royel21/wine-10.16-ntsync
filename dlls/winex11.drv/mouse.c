@@ -1582,6 +1582,7 @@ BOOL X11DRV_ButtonRelease( HWND hwnd, XEvent *xev )
 
     map_event_coords( hwnd, event->window, event->root, event->x_root, event->y_root, &input );
     send_mouse_input( hwnd, event->window, event->state, &input );
+    if (hwnd) raise_owned_popups( hwnd );
     return TRUE;
 }
 
