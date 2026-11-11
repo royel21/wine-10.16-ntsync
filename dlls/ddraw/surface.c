@@ -1679,14 +1679,19 @@ static HRESULT ddraw_surface_blt_clipped(struct ddraw_surface *dst_surface, cons
     clip_rect = (RECT *)clip_list->Buffer;
     for (i = 0; i < clip_list->rdh.nCount; ++i)
     {
-        RECT src_rect_clipped = src_rect;
+        RECT src_rect_clipped = src_rect, surface_rect, clipped;
+
+        /* a window partly outside the screen has a clip list that reaches past the surface */
+        SetRect(&surface_rect, 0, 0, dst_surface->surface_desc.dwWidth, dst_surface->surface_desc.dwHeight);
+        if (!IntersectRect(&clipped, &clip_rect[i], &surface_rect))
+            continue;
 
         if (src_surface)
         {
-            src_rect_clipped.left += (LONG)((clip_rect[i].left - dst_rect.left) * scale_x);
-            src_rect_clipped.top += (LONG)((clip_rect[i].top - dst_rect.top) * scale_y);
-            src_rect_clipped.right -= (LONG)((dst_rect.right - clip_rect[i].right) * scale_x);
-            src_rect_clipped.bottom -= (LONG)((dst_rect.bottom - clip_rect[i].bottom) * scale_y);
+            src_rect_clipped.left += (LONG)((clipped.left - dst_rect.left) * scale_x);
+            src_rect_clipped.top += (LONG)((clipped.top - dst_rect.top) * scale_y);
+            src_rect_clipped.right -= (LONG)((dst_rect.right - clipped.right) * scale_x);
+            src_rect_clipped.bottom -= (LONG)((dst_rect.bottom - clipped.bottom) * scale_y);
 
             if (src_surface->surface_desc.ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE)
             {
@@ -1695,13 +1700,13 @@ static HRESULT ddraw_surface_blt_clipped(struct ddraw_surface *dst_surface, cons
             }
         }
 
-        if (FAILED(hr = ddraw_surface_blt(dst_surface, &clip_rect[i],
+        if (FAILED(hr = ddraw_surface_blt(dst_surface, &clipped,
                 src_surface, &src_rect_clipped, flags, fill_colour, fx, filter)))
             break;
 
         if (dst_surface->surface_desc.ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE)
         {
-            if (FAILED(hr = ddraw_surface_update_frontbuffer(dst_surface, &clip_rect[i], FALSE, 0)))
+            if (FAILED(hr = ddraw_surface_update_frontbuffer(dst_surface, &clipped, FALSE, 0)))
                 break;
         }
     }
