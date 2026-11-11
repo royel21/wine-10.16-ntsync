@@ -858,6 +858,67 @@ DWORD WINAPI GetFileVersionInfoSizeExA( DWORD flags, LPCSTR filename, LPDWORD ha
 }
 
 /***********************************************************************
+ *           is_builtin_image
+ */
+static BOOL is_builtin_image( HMODULE module )
+{
+    static const char builtin_signature[] = "Wine builtin DLL";
+    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)((ULONG_PTR)module & ~(ULONG_PTR)3);
+    const char *signature = (const char *)(dos + 1);
+
+    return dos->e_magic == IMAGE_DOS_SIGNATURE &&
+           dos->e_lfanew >= sizeof(*dos) + sizeof(builtin_signature) &&
+           !memcmp( signature, builtin_signature, sizeof(builtin_signature) );
+}
+
+
+/***********************************************************************
+ *           localize_builtin_version
+ *
+ * The system dlls of a localized Windows carry a version resource in the
+ * system language, and some applications check it to detect the Windows
+ * language. Builtin dlls only have an US English one, so report it in the
+ * system language instead.
+ */
+static void localize_builtin_version( VS_VERSION_INFO_STRUCT32 *info, DWORD len )
+{
+    LANGID lang = GetSystemDefaultUILanguage();
+    VS_VERSION_INFO_STRUCT32 *child, *end = (VS_VERSION_INFO_STRUCT32 *)((BYTE *)info + min( len, info->wLength ));
+    WCHAR old_key[5], new_key[5];
+
+    if (PRIMARYLANGID(lang) == LANG_ENGLISH || PRIMARYLANGID(lang) == LANG_NEUTRAL) return;
+    swprintf( old_key, ARRAY_SIZE(old_key), L"%04x", MAKELANGID( LANG_ENGLISH, SUBLANG_ENGLISH_US ) );
+    swprintf( new_key, ARRAY_SIZE(new_key), L"%04x", lang );
+
+    for (child = (VS_VERSION_INFO_STRUCT32 *)VersionInfo32_Children( info );
+         child < end && child->wLength; child = VersionInfo32_Next( child ))
+    {
+        VS_VERSION_INFO_STRUCT32 *sub, *sub_end = (VS_VERSION_INFO_STRUCT32 *)((BYTE *)child + child->wLength);
+
+        if (sub_end > end) break;
+        for (sub = (VS_VERSION_INFO_STRUCT32 *)VersionInfo32_Children( child );
+             sub < sub_end && sub->wLength; sub = VersionInfo32_Next( sub ))
+        {
+            if (!wcsicmp( child->szKey, L"StringFileInfo" ))
+            {
+                if (lstrlenW( sub->szKey ) == 8 && !wcsnicmp( sub->szKey, old_key, 4 ))
+                    memcpy( sub->szKey, new_key, 4 * sizeof(WCHAR) );
+            }
+            else if (!wcsicmp( child->szKey, L"VarFileInfo" ) && !wcsicmp( sub->szKey, L"Translation" ))
+            {
+                WORD *value = (WORD *)VersionInfo32_Value( sub );
+                WORD *value_end = (WORD *)((BYTE *)value + sub->wValueLength);
+
+                if (value_end > (WORD *)sub_end) break;
+                for (; value + 1 < value_end; value += 2)
+                    if (value[0] == MAKELANGID( LANG_ENGLISH, SUBLANG_ENGLISH_US )) value[0] = lang;
+            }
+        }
+    }
+}
+
+
+/***********************************************************************
  *           GetFileVersionInfoExW           (kernelbase.@)
  */
 BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD ignored, DWORD datasize, LPVOID data )
@@ -897,6 +958,8 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD ignored,
             len = min( SizeofResource(hModule, hRsrc), datasize );
             memcpy( data, LockResource( hMem ), len );
             FreeResource( hMem );
+            if (len >= sizeof(*vvis) && !VersionInfoIs16( vvis ) && is_builtin_image( hModule ))
+                localize_builtin_version( vvis, len );
         }
         FreeLibrary( hModule );
     }
