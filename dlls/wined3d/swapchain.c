@@ -189,6 +189,50 @@ void CDECL wined3d_swapchain_set_window(struct wined3d_swapchain *swapchain, HWN
     swapchain->win_handle = window;
 }
 
+/* WINE_FRAME_LIMIT=<fps> caps the presentation rate, for old games that run as
+ * fast as they can draw. */
+static unsigned int get_frame_limit(void)
+{
+    static LONG limit = -1;
+    char buffer[16];
+    DWORD len;
+
+    if (limit < 0)
+    {
+        len = GetEnvironmentVariableA("WINE_FRAME_LIMIT", buffer, sizeof(buffer));
+        InterlockedExchange(&limit, (len && len < sizeof(buffer) && atoi(buffer) > 0) ? atoi(buffer) : 0);
+        if (limit) TRACE("Limiting presentation to %ld frames per second.\n", limit);
+    }
+    return limit;
+}
+
+static void wait_frame_limit(void)
+{
+    static LONGLONG next_frame;
+    unsigned int limit = get_frame_limit();
+    LARGE_INTEGER freq, now;
+    LONGLONG period, remaining;
+
+    if (!limit) return;
+
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&now);
+    period = freq.QuadPart / limit;
+
+    /* start over after a pause instead of presenting a burst of frames to catch up */
+    if (!next_frame || now.QuadPart - next_frame > period * 4)
+        next_frame = now.QuadPart;
+
+    while ((remaining = next_frame - now.QuadPart) > 0)
+    {
+        DWORD ms = remaining * 1000 / freq.QuadPart;
+
+        Sleep(ms > 1 ? ms - 1 : 0);
+        QueryPerformanceCounter(&now);
+    }
+    next_frame += period;
+}
+
 HRESULT CDECL wined3d_swapchain_present(struct wined3d_swapchain *swapchain,
         const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override,
         unsigned int swap_interval, uint32_t flags)
@@ -201,6 +245,8 @@ HRESULT CDECL wined3d_swapchain_present(struct wined3d_swapchain *swapchain,
 
     if (flags)
         FIXME("Ignoring flags %#x.\n", flags);
+
+    wait_frame_limit();
 
     wined3d_mutex_lock();
 
