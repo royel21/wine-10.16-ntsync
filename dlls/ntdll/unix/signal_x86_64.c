@@ -888,7 +888,9 @@ static inline void set_sigcontext( const CONTEXT *context, ucontext_t *sigcontex
 
 static inline BOOL is_16bit( const ucontext_t *sigcontext )
 {
-    return SS_sig(sigcontext) != ds64_sel;
+    /* a 16-bit stack is always an LDT selector; emulators may not report %ss */
+    WORD ss = SS_sig(sigcontext);
+    return ss != ds64_sel && (ss & 4);
 }
 
 
