@@ -1398,7 +1398,11 @@ ImageList_DrawIndirect (IMAGELISTDRAWPARAMS *pimldp)
      */
     if( bMask ) {
 	if (himl->hbmMask) {
-            hOldBrush = SelectObject (hImageDC, CreateSolidBrush (GetTextColor(pimldp->hdcDst)));
+            BITMAP bm;
+            /* a monochrome copy of the mask keeps opaque pixels black whatever the text colour is */
+            COLORREF mask_colour = (GetObjectW( hImageBmp, sizeof(bm), &bm ) && bm.bmBitsPixel == 1) ?
+                                   RGB(0, 0, 0) : GetTextColor( pimldp->hdcDst );
+            hOldBrush = SelectObject (hImageDC, CreateSolidBrush (mask_colour));
             PatBlt( hImageDC, 0, 0, cx, cy, PATCOPY );
             BitBlt(hImageDC, 0, 0, cx, cy, hMaskListDC, pt.x, pt.y, SRCPAINT);
             DeleteObject (SelectObject (hImageDC, hOldBrush));
