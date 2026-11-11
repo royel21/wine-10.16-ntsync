@@ -2213,20 +2213,48 @@ static HRESULT WINAPI ddraw1_FlipToGDISurface(IDirectDraw *iface)
  *****************************************************************************/
 static HRESULT WINAPI ddraw7_WaitForVerticalBlank(IDirectDraw7 *iface, DWORD Flags, HANDLE event)
 {
-    static BOOL hide;
+    struct ddraw *ddraw = impl_from_IDirectDraw7(iface);
+    LONGLONG frame, line, vblank_start, pos, target;
+    struct wined3d_display_mode mode;
+    LARGE_INTEGER freq, now;
+    HRESULT hr;
 
     TRACE("iface %p, flags %#lx, event %p.\n", iface, Flags, event);
-
-    /* This function is called often, so print the fixme only once */
-    if(!hide)
-    {
-        FIXME("iface %p, flags %#lx, event %p stub!\n", iface, Flags, event);
-        hide = TRUE;
-    }
 
     /* MSDN says DDWAITVB_BLOCKBEGINEVENT is not supported */
     if(Flags & DDWAITVB_BLOCKBEGINEVENT)
         return DDERR_UNSUPPORTED; /* unchecked */
+
+    /* Wait for the vertical blank that GetVerticalBlankStatus() reports, which
+     * wined3d derives from the performance counter and the refresh rate. Games
+     * that pace themselves with this would otherwise run as fast as they can. */
+    wined3d_mutex_lock();
+    hr = wined3d_output_get_display_mode(ddraw->wined3d_output, &mode, NULL);
+    wined3d_mutex_unlock();
+    if (FAILED(hr) || !QueryPerformanceFrequency(&freq) || !QueryPerformanceCounter(&now))
+        return DD_OK;
+    if (mode.refresh_rate <= 1)
+        mode.refresh_rate = 60;
+
+    frame = freq.QuadPart / mode.refresh_rate;
+    line = frame / (mode.height + 20);
+    vblank_start = line * mode.height;
+    pos = now.QuadPart % frame;
+
+    if (Flags & DDWAITVB_BLOCKEND)
+        target = now.QuadPart - pos + frame;
+    else if (pos < vblank_start)
+        target = now.QuadPart - pos + vblank_start;
+    else
+        target = now.QuadPart - pos + frame + vblank_start;
+
+    while (now.QuadPart < target)
+    {
+        DWORD ms = (target - now.QuadPart) * 1000 / freq.QuadPart;
+
+        Sleep(ms > 1 ? ms - 1 : 0);
+        QueryPerformanceCounter(&now);
+    }
 
     return DD_OK;
 }
