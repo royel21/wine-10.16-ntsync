@@ -2,5 +2,8 @@ MODULE = tzres.dll
 
 EXTRADLLFLAGS = -Wb,--data-only
 
+# tzres_lang.rc holds the translated names (tools/make_tzres_lang) for builds
+# without gettext; remove it when building with gettext, which adds them itself.
 SOURCES = \
-	tzres.rc
+	tzres.rc \
+	tzres_lang.rc
