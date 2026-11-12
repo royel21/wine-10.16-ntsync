@@ -2158,8 +2158,41 @@ static BOOL freetype_load_font( struct gdi_font *font )
 /*************************************************************
  * freetype_get_aa_flags
  */
+/* GDI draws the embedded bitmap strike of a font as is when one matches the
+ * requested size, even with font smoothing enabled. Only applies when the
+ * application did not explicitly ask for antialiasing. */
+static BOOL has_embedded_bitmap_strike( struct gdi_font *font )
+{
+    FT_Face ft_face;
+    int i;
+
+    if (!font->private) return FALSE;
+    ft_face = get_ft_face( font );
+
+    switch (font->lf.lfQuality)
+    {
+    case ANTIALIASED_QUALITY:
+    case CLEARTYPE_QUALITY:
+    case CLEARTYPE_NATURAL_QUALITY:
+        return FALSE;
+    }
+    if (!font->scalable || font->fake_italic || font->lf.lfOrientation % 3600) return FALSE;
+    if (!ft_face || !FT_HAS_FIXED_SIZES( ft_face )) return FALSE;
+
+    for (i = 0; i < ft_face->num_fixed_sizes; i++)
+        if ((ft_face->available_sizes[i].y_ppem + 32) >> 6 == font->ppem) return TRUE;
+    return FALSE;
+}
+
 static UINT freetype_get_aa_flags( struct gdi_font *font, UINT aa_flags, BOOL antialias_fakes )
 {
+    if (aa_flags != GGO_BITMAP && has_embedded_bitmap_strike( font ))
+    {
+        TRACE( "font %s %d aa disabled by embedded bitmap strike\n",
+               debugstr_w(font->lf.lfFaceName), font->lf.lfHeight );
+        return GGO_BITMAP;
+    }
+
     /* fixup the antialiasing flags for that font */
     switch (aa_flags)
     {
