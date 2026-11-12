@@ -254,6 +254,7 @@ static BOOL animate_palette( HPALETTE hPal, UINT StartIndex, UINT NumEntries,
         PALETTEOBJ * palPtr;
         UINT pal_entries;
         const PALETTEENTRY *pptr = PaletteColors;
+        BOOL changed = FALSE;
 
         palPtr = GDI_GetObjPtr( hPal, NTGDI_OBJ_PAL );
         if (!palPtr) return FALSE;
@@ -275,12 +276,29 @@ static BOOL animate_palette( HPALETTE hPal, UINT StartIndex, UINT NumEntries,
               palPtr->entries[StartIndex].peBlue,
               pptr->peRed, pptr->peGreen, pptr->peBlue);
             palPtr->entries[StartIndex] = *pptr;
+            changed = TRUE;
           } else {
             TRACE("Not animating entry %d -- not PC_RESERVED\n", StartIndex);
           }
         }
         GDI_ReleaseObj( hPal );
-        /* FIXME: check for palette selected in active window */
+
+        /* A palette device shows the new colors at once. The emulated one keeps
+         * the pixels already drawn, so have the foreground window repaint them,
+         * as NtGdiUpdateColors does: games fade in by animating the palette of a
+         * picture they draw only once. */
+        if (changed && hPal == hLastRealizedPalette)
+        {
+            HDC hdc = NtUserGetDCEx( 0, 0, DCX_CACHE | DCX_WINDOW );
+            HWND foreground;
+
+            if (hdc)
+            {
+                if (NtGdiGetDeviceCaps( hdc, SIZEPALETTE ) && (foreground = NtUserGetForegroundWindow()))
+                    NtUserRedrawWindow( foreground, NULL, 0, RDW_INVALIDATE | RDW_ALLCHILDREN );
+                NtUserReleaseDC( 0, hdc );
+            }
+        }
     }
     return TRUE;
 }
