@@ -572,6 +572,16 @@ static enum hittest find_item_by_coords( const struct menu *menu, POINT pt, UINT
         }
     }
 
+    /* The menu bar starts with a 1 pixel border above the items; a click on
+     * it (e.g. with the pointer pushed against the top screen edge) still
+     * belongs to the first row of items. */
+    if (!(menu->wFlags & MF_POPUP) && menu->nItems)
+    {
+        rect = menu->items[0].rect;
+        adjust_menu_item_rect( menu, &rect );
+        if (pt.y < rect.top) pt.y = rect.top;
+    }
+
     item = menu->items;
     for (i = 0; i < menu->nItems; i++, item++)
     {
