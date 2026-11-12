@@ -215,6 +215,39 @@ static ULONG data_offset( const CDTrack *track )
     return 16;
 }
 
+static int from_bcd( BYTE b )
+{
+    return (b >> 4) * 10 + (b & 15);
+}
+
+/* Some protected discs repeat a range of sector addresses, so their raw image holds
+ * more sectors than addresses and the sectors after the repeated range are not at
+ * their address. Raw sectors carry their address in the header; follow it to the
+ * sector that really has the requested address. */
+static LONGLONG sector_index( FILE *file, const CDTrack *track, LONG lba )
+{
+    static const BYTE sync[12] = {0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0};
+    LONGLONG index = lba - track->startLBA;
+    BYTE header[16];
+    int tries;
+
+    if (track->sectorSize < RAW_SECTOR_SIZE) return lba - track->startLBA;
+
+    for (tries = 0; tries < 4 && index >= 0; tries++)
+    {
+        LONG found;
+
+        if (_fseeki64( file, track->fileOffset + index * track->sectorSize, SEEK_SET ) ||
+            fread( header, 1, sizeof(header), file ) != sizeof(header) ||
+            memcmp( header, sync, sizeof(sync) ))
+            break;
+        found = (from_bcd( header[12] ) * 60 + from_bcd( header[13] )) * 75 + from_bcd( header[14] ) - 150;
+        if (found == lba) return index;
+        index += lba - found;
+    }
+    return lba - track->startLBA;
+}
+
 NTSTATUS image_cd_read( ULONGLONG offset, void *out, ULONG len, ULONG_PTR *info )
 {
     LONG lba = offset / 2048;
@@ -258,7 +291,7 @@ NTSTATUS image_cd_read( ULONGLONG offset, void *out, ULONG len, ULONG_PTR *info 
             }
         }
 
-        if (_fseeki64( file, track->fileOffset + (ULONGLONG)(lba - track->startLBA) * track->sectorSize +
+        if (_fseeki64( file, track->fileOffset + sector_index( file, track, lba ) * track->sectorSize +
                        data_offset( track ), SEEK_SET ) ||
             fread( buffer, 1, 2048, file ) != 2048)
         {
