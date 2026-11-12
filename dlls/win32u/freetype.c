@@ -289,7 +289,8 @@ static inline FT_Fixed FT_FixedFromFloat(double f)
 */
 static inline FT_Fixed FT_FixedFromFIXED(FIXED f)
 {
-    return (FT_Fixed)((int)f.value << 16 | (unsigned int)f.fract);
+    /* build the 32-bit value first so that negative values stay negative in a 64-bit FT_Fixed */
+    return (FT_Fixed)(int)((unsigned int)(unsigned short)f.value << 16 | f.fract);
 }
 
 static BOOL is_hinting_enabled(void)
