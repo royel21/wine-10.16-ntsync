@@ -6537,6 +6537,18 @@ fail:
     return hr;
 }
 
+static BOOL ddraw_overlays_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled == -1)
+    {
+        const char *str = getenv("WINE_DDRAW_OVERLAYS");
+        enabled = str && atoi(str) == 1;
+    }
+    return enabled;
+}
+
 HRESULT ddraw_surface_create(struct ddraw *ddraw, const DDSURFACEDESC2 *surface_desc,
         struct ddraw_surface **surface, IUnknown *outer_unknown, unsigned int version)
 {
@@ -6874,6 +6886,16 @@ HRESULT ddraw_surface_create(struct ddraw *ddraw, const DDSURFACEDESC2 *surface_
             == (DDSCAPS_OVERLAY | DDSCAPS_SYSTEMMEMORY))
     {
         WARN("System memory overlays are not allowed.\n");
+        free(texture);
+        return DDERR_NOOVERLAYHW;
+    }
+
+    /* DDCAPS_OVERLAY is not reported and overlays are not composited at
+     * present time, so refuse them like hardware without overlay support.
+     * Video renderers then fall back to plain offscreen surfaces. */
+    if ((desc->ddsCaps.dwCaps & DDSCAPS_OVERLAY) && !ddraw_overlays_enabled())
+    {
+        WARN("Overlays are not supported.\n");
         free(texture);
         return DDERR_NOOVERLAYHW;
     }
