@@ -2147,6 +2147,9 @@ static MMRESULT WINMM_SetupMMDeviceVolume(WINMM_MMDevice *mmdevice)
 
 static DWORD cd_line_volume = 0xFFFF;
 static BOOL cd_line_mute;
+/* source line controls are not mapped to anything; keep the values so they read back as set */
+static DWORD src_line_volume[2] = { 0xFFFF, 0xFFFF };
+static BOOL src_line_mute[2];
 
 static BOOL mixer_is_out(const WINMM_MMDevice *mmdevice)
 {
@@ -2229,8 +2232,20 @@ static LRESULT MXD_GetControlDetails(WINMM_ControlDetails *details)
             return MMSYSERR_INVALPARAM;
         }
         ((MIXERCONTROLDETAILS_BOOLEAN*)control->paDetails)->fValue = cd_line_mute;
-    }else if(control->dwControlID == 2 || control->dwControlID == 3){
-        FIXME("What should the sw-side mixer controls map to?\n");
+    }else if(control->dwControlID == 2){
+        if(!control->paDetails ||
+                control->cbDetails < sizeof(MIXERCONTROLDETAILS_UNSIGNED)){
+            LeaveCriticalSection(&mmdevice->lock);
+            return MMSYSERR_INVALPARAM;
+        }
+        ((MIXERCONTROLDETAILS_UNSIGNED*)control->paDetails)->dwValue = src_line_volume[mixer_is_out(mmdevice)];
+    }else if(control->dwControlID == 3){
+        if(!control->paDetails ||
+                control->cbDetails < sizeof(MIXERCONTROLDETAILS_BOOLEAN)){
+            LeaveCriticalSection(&mmdevice->lock);
+            return MMSYSERR_INVALPARAM;
+        }
+        ((MIXERCONTROLDETAILS_BOOLEAN*)control->paDetails)->fValue = src_line_mute[mixer_is_out(mmdevice)];
     }else{
         LeaveCriticalSection(&mmdevice->lock);
         return MIXERR_INVALCONTROL;
@@ -2325,8 +2340,22 @@ static LRESULT MXD_SetControlDetails(WINMM_ControlDetails *details)
             return MMSYSERR_INVALPARAM;
         }
         cd_line_mute = !!bdet->fValue;
-    }else if(control->dwControlID == 2 || control->dwControlID == 3){
-        FIXME("What should the sw-side mixer controls map to?\n");
+    }else if(control->dwControlID == 2){
+        MIXERCONTROLDETAILS_UNSIGNED *udet = control->paDetails;
+
+        if(!udet || control->cbDetails < sizeof(*udet) || udet->dwValue > 65535){
+            LeaveCriticalSection(&mmdevice->lock);
+            return MMSYSERR_INVALPARAM;
+        }
+        src_line_volume[mixer_is_out(mmdevice)] = udet->dwValue;
+    }else if(control->dwControlID == 3){
+        MIXERCONTROLDETAILS_BOOLEAN *bdet = control->paDetails;
+
+        if(!bdet || control->cbDetails < sizeof(*bdet)){
+            LeaveCriticalSection(&mmdevice->lock);
+            return MMSYSERR_INVALPARAM;
+        }
+        src_line_mute[mixer_is_out(mmdevice)] = !!bdet->fValue;
     }else{
         LeaveCriticalSection(&mmdevice->lock);
         return MIXERR_INVALCONTROL;
