@@ -245,6 +245,7 @@ static bool parseCue(const wchar_t* cuePath, VirtualCD* cd) {
 
 static bool parseCCD(const wchar_t* ccdPath, VirtualCD* cd) {
     wchar_t value[64];
+    bool noTrackSections = false;
     DWORD leadoutLBA = 0;
     ULONGLONG imgSize;
     int i;
@@ -299,6 +300,35 @@ static bool parseCCD(const wchar_t* ccdPath, VirtualCD* cd) {
         trk->index1 = GetPrivateProfileIntW(section, L"INDEX 1", 0, ccdPath);
     }
 
+    /* some dumps have no TRACK sections: take the tracks from the TOC entries,
+     * whose control field tells data from audio */
+    if (!cd->trackCount)
+        noTrackSections = true;
+    for (i = 0; noTrackSections && i < 256; i++) {
+        wchar_t section[32];
+        unsigned point, control;
+        CDTrack* trk;
+
+        swprintf(section, ARRAY_SIZE(section), L"Entry %d", i);
+        GetPrivateProfileStringW(section, L"Point", L"", value, ARRAY_SIZE(value), ccdPath);
+        if (!value[0] || swscanf(value, L"%x", &point) != 1 || point < 1 || point > MAX_CD_TRACKS)
+            continue;
+        GetPrivateProfileStringW(section, L"Control", L"0", value, ARRAY_SIZE(value), ccdPath);
+        if (swscanf(value, L"%x", &control) != 1)
+            control = 0;
+
+        trk = &cd->tracks[point - 1];
+        memset(trk, 0, sizeof(*trk));
+        trk->trackNumber = point;
+        trk->sectorSize = 2352;
+        trk->index0 = -1;
+        trk->isAudio = !(control & 0x04);
+        strcpy(trk->mode, trk->isAudio ? "AUDIO" : "MODE1/2352");
+        wcscpy(trk->filePath, cd->binPath);
+        if ((int)point > cd->trackCount)
+            cd->trackCount = point;
+    }
+
     if (!cd->trackCount)
         return false;
 
@@ -341,6 +371,24 @@ static bool parseCCD(const wchar_t* ccdPath, VirtualCD* cd) {
     for (i = 0; i < cd->trackCount; i++) {
         CDTrack* trk = &cd->tracks[i];
         trk->fileOffset = (ULONGLONG)trk->startLBA * 2352;
+    }
+
+    /* without TRACK sections the mode of a data track comes from its first sector header */
+    if (noTrackSections) {
+        FILE* fp = _wfopen(cd->binPath, L"rb");
+
+        for (i = 0; fp && i < cd->trackCount; i++) {
+            CDTrack* trk = &cd->tracks[i];
+            uint8_t header[16];
+
+            if (trk->isAudio || _fseeki64(fp, trk->fileOffset, SEEK_SET) ||
+                fread(header, 1, sizeof(header), fp) != sizeof(header))
+                continue;
+            if (header[0] == 0x00 && header[1] == 0xFF && header[15] == 2)
+                strcpy(trk->mode, "MODE2/2352");
+        }
+        if (fp)
+            fclose(fp);
     }
 
     return true;
@@ -687,6 +735,29 @@ static inline wchar_t* getFileExtension(wchar_t* path) {
     return ext && *ext++ != L'\0' ? ext : NULL;
 }
 
+/* a plain ISO image is one data track of 2048-byte sectors */
+static bool parseISO(const wchar_t* isoPath, VirtualCD* cd) {
+    ULONGLONG fileSize = getFileSize64(isoPath);
+    CDTrack* trk;
+
+    if (fileSize < 2048)
+        return false;
+
+    memset(cd, 0, sizeof(*cd));
+    wcscpy(cd->cuePath, isoPath);
+    wcscpy(cd->binPath, isoPath);
+    cd->trackCount = 1;
+
+    trk = &cd->tracks[0];
+    trk->trackNumber = 1;
+    strcpy(trk->mode, "MODE1/2048");
+    trk->sectorSize = 2048;
+    trk->index0 = -1;
+    trk->endLBA = (long)(fileSize / 2048);
+    wcscpy(trk->filePath, isoPath);
+    return true;
+}
+
 static inline bool hasEx(wchar_t* path, const wchar_t* targetExt) {
     wchar_t* ext = getFileExtension(path);
     return ext && wcsicmp(ext, targetExt) == 0;
@@ -751,6 +822,9 @@ bool LoadCurrentDisc(VirtualCD* cd) {
     }
     else if (hasEx(path, L"cdi")) {
         ok = parseCDI(path, cd);
+    }
+    else if (hasEx(path, L"iso")) {
+        ok = parseISO(path, cd);
     }
 
     if (!ok)
