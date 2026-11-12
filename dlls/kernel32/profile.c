@@ -64,7 +64,7 @@ typedef struct
     PROFILESECTION  *section;
     WCHAR           *filename;
     FILETIME LastWriteTime;
-    ULONGLONG file_id;     /* volume serial and file index, a file with the same name can be another file */
+    ULONGLONG file_id;     /* file index and change time, a file with the same name can be another file */
     ENCODING encoding;
 } PROFILE;
 
@@ -638,13 +638,17 @@ static PROFILEKEY *PROFILE_Find( PROFILESECTION **section, LPCWSTR section_name,
  *
  * Flush the current profile to disk if changed.
  */
+/* only file information: the volume serial would need the mount manager, which
+ * itself reads profile files when it parses a disc image descriptor */
 static ULONGLONG get_file_id( HANDLE file )
 {
-    BY_HANDLE_FILE_INFORMATION info;
+    FILE_INTERNAL_INFORMATION internal;
+    FILE_BASIC_INFORMATION basic;
+    IO_STATUS_BLOCK io;
 
-    if (!GetFileInformationByHandle( file, &info )) return 0;
-    return ((ULONGLONG)info.dwVolumeSerialNumber << 32) ^
-           ((ULONGLONG)info.nFileIndexHigh << 32 | info.nFileIndexLow);
+    if (NtQueryInformationFile( file, &io, &internal, sizeof(internal), FileInternalInformation )) return 0;
+    if (NtQueryInformationFile( file, &io, &basic, sizeof(basic), FileBasicInformation )) return 0;
+    return internal.IndexNumber.QuadPart ^ basic.ChangeTime.QuadPart;
 }
 
 static BOOL PROFILE_FlushFile(void)
