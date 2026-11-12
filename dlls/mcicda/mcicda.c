@@ -1299,6 +1299,16 @@ static DWORD MCICDA_Play(UINT wDevID, DWORD dwFlags, LPMCI_PLAY_PARMS lpParms)
         if ((ret = MCICDA_SkipDataTracks(wmcda, &end)))
             return ret;
         TRACE("MCI_TO=%08lX -> %lu\n", lpParms->dwTo, end);
+
+        /* In TMSF, a "to" naming just the track that playing starts at plays that
+         * whole track; some games loop their music with it. */
+        if (wmcda->dwTimeFormat == MCI_FORMAT_TMSF && (dwFlags & MCI_FROM) && end == start &&
+            !(lpParms->dwTo & 0xffffff00) && MCI_TMSF_TRACK(lpParms->dwTo) >= toc.FirstTrack &&
+            MCI_TMSF_TRACK(lpParms->dwTo) <= toc.LastTrack)
+        {
+            end = FRAME_OF_TOC(toc, MCI_TMSF_TRACK(lpParms->dwTo) + 1) - 1;
+            TRACE("playing whole track %u, to %lu\n", MCI_TMSF_TRACK(lpParms->dwTo), end);
+        }
     }
     else {
         end = FRAME_OF_TOC(toc, toc.LastTrack + 1) - 1;
