@@ -136,5 +136,7 @@ IDS_MAPPER_NAME,		"Wine Sound Mapper"
 IDS_VOLUME,			"Volume"
 IDS_MASTER_VOLUME,		"Master Volume"
 IDS_MUTE,			"Mute"
+IDS_CD_AUDIO,			"CD Audio"
+IDS_CD_AUDIO_SHORT,		"CD"
 
 END

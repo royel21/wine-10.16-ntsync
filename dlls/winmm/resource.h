@@ -20,3 +20,5 @@
 #define IDS_VOLUME         1001
 #define IDS_MASTER_VOLUME  1002
 #define IDS_MUTE           1003
+#define IDS_CD_AUDIO       1004
+#define IDS_CD_AUDIO_SHORT 1005

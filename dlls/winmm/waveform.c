@@ -2138,6 +2138,21 @@ static MMRESULT WINMM_SetupMMDeviceVolume(WINMM_MMDevice *mmdevice)
     return MMSYSERR_NOERROR;
 }
 
+/* Output mixers also have a CD audio source line, which old games look for to
+ * set the CD music volume. Its controls only keep the values set by the
+ * application. */
+#define CD_LINE_ID 1
+#define CD_VOLUME_CONTROL_ID 4
+#define CD_MUTE_CONTROL_ID 5
+
+static DWORD cd_line_volume = 0xFFFF;
+static BOOL cd_line_mute;
+
+static BOOL mixer_is_out(const WINMM_MMDevice *mmdevice)
+{
+    return mmdevice->in_caps.szPname[0] == '\0';
+}
+
 static LRESULT MXD_GetControlDetails(WINMM_ControlDetails *details)
 {
     WINMM_MMDevice *mmdevice;
@@ -2200,6 +2215,20 @@ static LRESULT MXD_GetControlDetails(WINMM_ControlDetails *details)
 
         bdet = (MIXERCONTROLDETAILS_BOOLEAN*)control->paDetails;
         bdet->fValue = mute;
+    }else if(control->dwControlID == CD_VOLUME_CONTROL_ID && mixer_is_out(mmdevice)){
+        if(!control->paDetails ||
+                control->cbDetails < sizeof(MIXERCONTROLDETAILS_UNSIGNED)){
+            LeaveCriticalSection(&mmdevice->lock);
+            return MMSYSERR_INVALPARAM;
+        }
+        ((MIXERCONTROLDETAILS_UNSIGNED*)control->paDetails)->dwValue = cd_line_volume;
+    }else if(control->dwControlID == CD_MUTE_CONTROL_ID && mixer_is_out(mmdevice)){
+        if(!control->paDetails ||
+                control->cbDetails < sizeof(MIXERCONTROLDETAILS_BOOLEAN)){
+            LeaveCriticalSection(&mmdevice->lock);
+            return MMSYSERR_INVALPARAM;
+        }
+        ((MIXERCONTROLDETAILS_BOOLEAN*)control->paDetails)->fValue = cd_line_mute;
     }else if(control->dwControlID == 2 || control->dwControlID == 3){
         FIXME("What should the sw-side mixer controls map to?\n");
     }else{
@@ -2280,6 +2309,22 @@ static LRESULT MXD_SetControlDetails(WINMM_ControlDetails *details)
             LeaveCriticalSection(&mmdevice->lock);
             return MMSYSERR_ERROR;
         }
+    }else if(control->dwControlID == CD_VOLUME_CONTROL_ID && mixer_is_out(mmdevice)){
+        MIXERCONTROLDETAILS_UNSIGNED *udet = control->paDetails;
+
+        if(!udet || control->cbDetails < sizeof(*udet) || udet->dwValue > 65535){
+            LeaveCriticalSection(&mmdevice->lock);
+            return MMSYSERR_INVALPARAM;
+        }
+        cd_line_volume = udet->dwValue;
+    }else if(control->dwControlID == CD_MUTE_CONTROL_ID && mixer_is_out(mmdevice)){
+        MIXERCONTROLDETAILS_BOOLEAN *bdet = control->paDetails;
+
+        if(!bdet || control->cbDetails < sizeof(*bdet)){
+            LeaveCriticalSection(&mmdevice->lock);
+            return MMSYSERR_INVALPARAM;
+        }
+        cd_line_mute = !!bdet->fValue;
     }else if(control->dwControlID == 2 || control->dwControlID == 3){
         FIXME("What should the sw-side mixer controls map to?\n");
     }else{
@@ -4025,7 +4070,7 @@ UINT WINAPI mixerGetLineControlsA(HMIXEROBJ hmix, LPMIXERLINECONTROLSA lpmlcA,
 static UINT WINMM_GetVolumeLineControl(WINMM_MMDevice *mmdevice, DWORD line,
         MIXERCONTROLW *ctl, DWORD flags)
 {
-    ctl->dwControlID = (line == 0xFFFF0000) ? 0 : 2;
+    ctl->dwControlID = (line == 0xFFFF0000) ? 0 : (line == CD_LINE_ID) ? CD_VOLUME_CONTROL_ID : 2;
     ctl->dwControlType = MIXERCONTROL_CONTROLTYPE_VOLUME;
     ctl->fdwControl = MIXERCONTROL_CONTROLF_UNIFORM;
     ctl->cMultipleItems = 0;
@@ -4041,7 +4086,7 @@ static UINT WINMM_GetVolumeLineControl(WINMM_MMDevice *mmdevice, DWORD line,
 static UINT WINMM_GetMuteLineControl(WINMM_MMDevice *mmdevice, DWORD line,
         MIXERCONTROLW *ctl, DWORD flags)
 {
-    ctl->dwControlID = (line == 0xFFFF0000) ? 1 : 3;
+    ctl->dwControlID = (line == 0xFFFF0000) ? 1 : (line == CD_LINE_ID) ? CD_MUTE_CONTROL_ID : 3;
     ctl->dwControlType = MIXERCONTROL_CONTROLTYPE_MUTE;
     ctl->fdwControl = MIXERCONTROL_CONTROLF_UNIFORM;
     ctl->cMultipleItems = 0;
@@ -4095,7 +4140,8 @@ UINT WINAPI mixerGetLineControlsW(HMIXEROBJ hmix, LPMIXERLINECONTROLSW lpmlcW,
             return MMSYSERR_INVALPARAM;
         if(lpmlcW->cbmxctrl < sizeof(MIXERCONTROLW))
             return MMSYSERR_INVALPARAM;
-        if(lpmlcW->dwLineID != 0 && lpmlcW->dwLineID != 0xFFFF0000)
+        if(lpmlcW->dwLineID != 0 && lpmlcW->dwLineID != 0xFFFF0000 &&
+                (lpmlcW->dwLineID != CD_LINE_ID || !mixer_is_out(mmdevice)))
             return MIXERR_INVALLINE;
         WINMM_GetVolumeLineControl(mmdevice, lpmlcW->dwLineID,
                 &lpmlcW->pamxctrl[0], fdwControls);
@@ -4107,7 +4153,17 @@ UINT WINAPI mixerGetLineControlsW(HMIXEROBJ hmix, LPMIXERLINECONTROLSW lpmlcW,
             return MMSYSERR_INVALPARAM;
         if(lpmlcW->cbmxctrl < sizeof(MIXERCONTROLW))
             return MMSYSERR_INVALPARAM;
-        if(lpmlcW->dwLineID != 0 && lpmlcW->dwLineID != 0xFFFF0000)
+        if((lpmlcW->dwControlID == CD_VOLUME_CONTROL_ID ||
+                lpmlcW->dwControlID == CD_MUTE_CONTROL_ID) && mixer_is_out(mmdevice)){
+            lpmlcW->dwLineID = CD_LINE_ID;
+            if(lpmlcW->dwControlID == CD_VOLUME_CONTROL_ID)
+                return WINMM_GetVolumeLineControl(mmdevice, CD_LINE_ID,
+                        lpmlcW->pamxctrl, fdwControls);
+            return WINMM_GetMuteLineControl(mmdevice, CD_LINE_ID,
+                    lpmlcW->pamxctrl, fdwControls);
+        }
+        if(lpmlcW->dwLineID != 0 && lpmlcW->dwLineID != 0xFFFF0000 &&
+                (lpmlcW->dwLineID != CD_LINE_ID || !mixer_is_out(mmdevice)))
             return MIXERR_INVALLINE;
         if(lpmlcW->dwControlID == 0)
             return WINMM_GetVolumeLineControl(mmdevice, lpmlcW->dwLineID,
@@ -4121,7 +4177,8 @@ UINT WINAPI mixerGetLineControlsW(HMIXEROBJ hmix, LPMIXERLINECONTROLSW lpmlcW,
             return MMSYSERR_INVALPARAM;
         if(lpmlcW->cbmxctrl < sizeof(MIXERCONTROLW))
             return MMSYSERR_INVALPARAM;
-        if(lpmlcW->dwLineID != 0 && lpmlcW->dwLineID != 0xFFFF0000)
+        if(lpmlcW->dwLineID != 0 && lpmlcW->dwLineID != 0xFFFF0000 &&
+                (lpmlcW->dwLineID != CD_LINE_ID || !mixer_is_out(mmdevice)))
             return MIXERR_INVALLINE;
         if(lpmlcW->dwControlType == MIXERCONTROL_CONTROLTYPE_VOLUME)
             return WINMM_GetVolumeLineControl(mmdevice, lpmlcW->dwLineID,
@@ -4141,6 +4198,25 @@ static UINT WINMM_GetSourceLineInfo(WINMM_MMDevice *mmdevice, UINT mmdev_index,
     BOOL is_out = TRUE;
     if(mmdevice->in_caps.szPname[0] != '\0')
         is_out = FALSE;
+
+    if(info->dwSource == 1 && is_out){
+        info->dwDestination = 0;
+        info->dwLineID = CD_LINE_ID;
+        info->fdwLine = MIXERLINE_LINEF_ACTIVE | MIXERLINE_LINEF_SOURCE;
+        info->dwComponentType = MIXERLINE_COMPONENTTYPE_SRC_COMPACTDISC;
+        info->cChannels = 2;
+        info->cConnections = 0;
+        info->cControls = 2;
+        LoadStringW(hWinMM32Instance, IDS_CD_AUDIO_SHORT, info->szShortName, MIXER_SHORT_NAME_CHARS);
+        LoadStringW(hWinMM32Instance, IDS_CD_AUDIO, info->szName, MIXER_LONG_NAME_CHARS);
+        info->Target.dwType = MIXERLINE_TARGETTYPE_UNDEFINED;
+        info->Target.dwDeviceID = 0;
+        info->Target.wMid = ~0;
+        info->Target.wPid = ~0;
+        info->Target.vDriverVersion = 0;
+        info->Target.szPname[0] = '\0';
+        return MMSYSERR_NOERROR;
+    }
 
     if(info->dwSource != 0)
         return MIXERR_INVALLINE;
@@ -4187,7 +4263,7 @@ static UINT WINMM_GetDestinationLineInfo(WINMM_MMDevice *mmdevice,
     info->dwSource = 0xFFFFFFFF;
     info->dwLineID = 0xFFFF0000;
     info->fdwLine = MIXERLINE_LINEF_ACTIVE;
-    info->cConnections = 1;
+    info->cConnections = is_out ? 2 : 1;
     info->cControls = 2;
 
     LoadStringW(hWinMM32Instance, IDS_VOLUME, info->szShortName, MIXER_SHORT_NAME_CHARS);
@@ -4249,6 +4325,13 @@ static UINT WINMM_GetComponentTypeLineInfo(WINMM_MMDevice *mmdevice,
         return WINMM_GetSourceLineInfo(mmdevice, mmdev_index, info, flags);
     }
 
+    if(info->dwComponentType == MIXERLINE_COMPONENTTYPE_SRC_COMPACTDISC){
+        if(!is_out)
+            return MIXERR_INVALLINE;
+        info->dwSource = 1;
+        return WINMM_GetSourceLineInfo(mmdevice, mmdev_index, info, flags);
+    }
+
     TRACE("Returning INVALLINE on this component type: %lu\n",
             info->dwComponentType);
 
@@ -4265,6 +4348,11 @@ static UINT WINMM_GetLineIDLineInfo(WINMM_MMDevice *mmdevice,
 
     if(info->dwLineID == 0){
         info->dwSource = 0;
+        return WINMM_GetSourceLineInfo(mmdevice, mmdev_index, info, flags);
+    }
+
+    if(info->dwLineID == CD_LINE_ID && mixer_is_out(mmdevice)){
+        info->dwSource = 1;
         return WINMM_GetSourceLineInfo(mmdevice, mmdev_index, info, flags);
     }
 
