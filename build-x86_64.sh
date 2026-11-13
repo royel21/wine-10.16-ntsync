@@ -143,6 +143,8 @@ cat > "${INSTALL_PREFIX}/profile.json" <<EOF
 EOF
 
 cp -v "${PREFIX_PACK}" "${INSTALL_PREFIX}/prefixPack.tzst"
+# General MIDI soundfont for DirectMusic (the host has none in /usr/share)
+[ -f "${WINE_SRC_DIR}/default-GM.sf2" ] && cp -v "${WINE_SRC_DIR}/default-GM.sf2" "${INSTALL_PREFIX}/share/wine/"
 
 # 7. Compress Package into .wcp
 echo "==> Packaging into Winlator Container Package (.wcp)..."
