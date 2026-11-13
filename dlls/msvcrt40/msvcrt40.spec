@@ -1458,7 +1458,7 @@
 @ cdecl _mbccpy(ptr ptr) msvcrt._mbccpy
 @ cdecl _mbcjistojms(long) msvcrt._mbcjistojms
 @ cdecl _mbcjmstojis(long) msvcrt._mbcjmstojis
-@ cdecl _mbclen(ptr) msvcrt._mbclen
+@ cdecl _mbclen(ptr) MSVCRT40__mbclen
 @ cdecl _mbctohira(long) msvcrt._mbctohira
 @ cdecl _mbctokata(long) msvcrt._mbctokata
 @ cdecl _mbctolower(long) msvcrt._mbctolower
