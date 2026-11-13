@@ -434,6 +434,12 @@ static	LRESULT	MPEG3_FormatSuggest(PACMDRVFORMATSUGGEST adfs)
  *           MPEG3_StreamSize
  *
  */
+/* MPEG-1 frames hold 1152 samples, MPEG-2 and 2.5 frames (below 32 kHz) hold 576 */
+static DWORD mp3_frame_samples(DWORD rate)
+{
+    return rate >= 32000 ? 1152 : 576;
+}
+
 static	LRESULT MPEG3_StreamSize(PACMDRVSTREAMINSTANCE adsi, PACMDRVSTREAMSIZE adss)
 {
     DWORD nblocks;
@@ -455,10 +461,13 @@ static	LRESULT MPEG3_StreamSize(PACMDRVSTREAMINSTANCE adsi, PACMDRVSTREAMSIZE ad
                  adsi->pwfxSrc->wFormatTag == WAVE_FORMAT_MPEG) &&
                  adsi->pwfxDst->wFormatTag == WAVE_FORMAT_PCM)
         {
-            nblocks = adss->cbDstLength / (adsi->pwfxDst->nBlockAlign * 1152);
+            DWORD frame_samples = mp3_frame_samples(adsi->pwfxSrc->nSamplesPerSec);
+            DWORD dst_samples = frame_samples * adsi->pwfxDst->nSamplesPerSec / adsi->pwfxSrc->nSamplesPerSec;
+
+            nblocks = adss->cbDstLength / (adsi->pwfxDst->nBlockAlign * dst_samples);
             if (nblocks == 0)
                 return ACMERR_NOTPOSSIBLE;
-            adss->cbSrcLength = nblocks * (DWORD)(adsi->pwfxSrc->nAvgBytesPerSec * 1152 / adsi->pwfxSrc->nSamplesPerSec);
+            adss->cbSrcLength = nblocks * (DWORD)(adsi->pwfxSrc->nAvgBytesPerSec * frame_samples / adsi->pwfxSrc->nSamplesPerSec);
 	}
         else
         {
@@ -483,13 +492,18 @@ static	LRESULT MPEG3_StreamSize(PACMDRVSTREAMINSTANCE adsi, PACMDRVSTREAMSIZE ad
                  adsi->pwfxSrc->wFormatTag == WAVE_FORMAT_MPEG) &&
                  adsi->pwfxDst->wFormatTag == WAVE_FORMAT_PCM)
         {
-            nblocks = adss->cbSrcLength / (DWORD)(adsi->pwfxSrc->nAvgBytesPerSec * 1152 / adsi->pwfxSrc->nSamplesPerSec);
-            if (adss->cbSrcLength % (DWORD)(adsi->pwfxSrc->nAvgBytesPerSec * 1152 / adsi->pwfxSrc->nSamplesPerSec))
+            DWORD frame_samples = mp3_frame_samples(adsi->pwfxSrc->nSamplesPerSec);
+            DWORD frame_bytes = adsi->pwfxSrc->nAvgBytesPerSec * frame_samples / adsi->pwfxSrc->nSamplesPerSec;
+
+            if (!frame_bytes) return ACMERR_NOTPOSSIBLE;
+            nblocks = adss->cbSrcLength / frame_bytes;
+            if (adss->cbSrcLength % frame_bytes)
                 /* Round block count up. */
                 nblocks++;
             if (nblocks == 0)
                 return ACMERR_NOTPOSSIBLE;
-            adss->cbDstLength = nblocks * 1152 * adsi->pwfxDst->nBlockAlign;
+            adss->cbDstLength = nblocks * (frame_samples * adsi->pwfxDst->nSamplesPerSec / adsi->pwfxSrc->nSamplesPerSec)
+                                * adsi->pwfxDst->nBlockAlign;
 	}
         else
         {
