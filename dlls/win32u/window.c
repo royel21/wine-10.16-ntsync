@@ -3890,7 +3890,10 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
         {
             HWND parent = NtUserGetAncestor( winpos->hwnd, GA_PARENT );
             if (!parent || parent == get_desktop_window()) parent = winpos->hwnd;
-            erase_now( parent, 0 );
+            /* a parent owned by another thread is repainted through its own
+             * queue; sending it paint messages here can deadlock when that
+             * thread waits on ours */
+            if (is_current_thread_window( parent )) erase_now( parent, 0 );
         }
 
         /* Give newly shown windows a chance to redraw */
