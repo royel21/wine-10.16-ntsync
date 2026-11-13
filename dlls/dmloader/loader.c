@@ -42,6 +42,23 @@ static HRESULT get_system_default_gm_path(WCHAR *path, UINT max_len)
         return S_OK;
     }
 
+    /* Fall back to a soundfont shipped in Wine's data directory, for hosts
+     * that don't have one in the usual system places. */
+    if (GetEnvironmentVariableW(L"WINEDATADIR", path, max_len) < max_len)
+    {
+        UINT len = wcslen(path);
+
+        if (len && len + wcslen(L"\\default-GM.sf2") < max_len)
+        {
+            wcscpy(path + len, L"\\default-GM.sf2");
+            if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+            {
+                WARN("Using %s for the default collection\n", debugstr_w(path));
+                return S_OK;
+            }
+        }
+    }
+
     ERR("Unable to find system path, default collection will not be available\n");
     return DMUS_E_LOADER_FAILEDOPEN;
 }
