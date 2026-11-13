@@ -99,14 +99,14 @@ static ULONG WINAPI image_presenter_Release(IVMRImagePresenter *iface)
 
 static HRESULT WINAPI image_presenter_StartPresenting(IVMRImagePresenter *iface, DWORD_PTR cookie)
 {
-    FIXME("iface %p, cookie %#Ix, stub!\n", iface, cookie);
-    return E_NOTIMPL;
+    TRACE("iface %p, cookie %#Ix.\n", iface, cookie);
+    return S_OK;
 }
 
 static HRESULT WINAPI image_presenter_StopPresenting(IVMRImagePresenter *iface, DWORD_PTR cookie)
 {
-    FIXME("iface %p, cookie %#Ix, stub!\n", iface, cookie);
-    return E_NOTIMPL;
+    TRACE("iface %p, cookie %#Ix.\n", iface, cookie);
+    return S_OK;
 }
 
 static void set_primary_clipper(struct vmr7_presenter *presenter)
