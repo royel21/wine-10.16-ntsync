@@ -930,12 +930,29 @@ static HRESULT WINAPI performance_ReferenceToMusicTime(IDirectMusicPerformance8 
 }
 
 static HRESULT WINAPI performance_IsPlaying(IDirectMusicPerformance8 *iface,
-        IDirectMusicSegment *pSegment, IDirectMusicSegmentState *pSegState)
+        IDirectMusicSegment *segment, IDirectMusicSegmentState *state)
 {
-        struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    struct performance *This = impl_from_IDirectMusicPerformance8(iface);
+    struct list states = LIST_INIT(states);
+    struct state_entry *entry, *next;
+    HRESULT hr = S_FALSE;
 
-	FIXME("(%p, %p, %p): stub\n", This, pSegment, pSegState);
-	return S_FALSE;
+    TRACE("(%p, %p, %p)\n", This, segment, state);
+
+    if (!segment && !state) return E_POINTER;
+
+    EnterCriticalSection(&This->safe);
+
+    enum_segment_states(This, segment, &states);
+    LIST_FOR_EACH_ENTRY_SAFE(entry, next, &states, struct state_entry, entry)
+    {
+        if (!state || entry->state == state) hr = S_OK;
+        state_entry_destroy(entry);
+    }
+
+    LeaveCriticalSection(&This->safe);
+
+    return hr;
 }
 
 static HRESULT WINAPI performance_GetTime(IDirectMusicPerformance8 *iface, REFERENCE_TIME *time, MUSIC_TIME *music_time)
