@@ -1,0 +1,4 @@
+MODULE    = dsetup.dll
+
+SOURCES = \
+	main.c

@@ -1018,6 +1018,8 @@ static void create_known_dlls(void)
         if (res) break;
         add_known_dll( &dlls, value );
     }
+    /* like Windows, use the system copy even when a game ships its own outdated one */
+    add_known_dll( &dlls, L"dsetup.dll" );
 
     for (int i = 0; machines[i].Machine; i++)
     {
@@ -1688,7 +1690,7 @@ done:
  * later; installers only find programs that exist in the system directory. */
 static void install_missing_programs(void)
 {
-    static const WCHAR *programs[] = { L"grpconv.exe" };
+    static const WCHAR *programs[] = { L"grpconv.exe", L"dsetup.dll" };
     static const char inf_head[] = "[version]\r\nsignature=\"$CHICAGO$\"\r\n"
                                    "[DefaultInstall]\r\nWineFakeDlls=Files\r\n[Files]\r\n";
     WCHAR sysdir[MAX_PATH], path[MAX_PATH], inf_path[MAX_PATH];
