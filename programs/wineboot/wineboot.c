@@ -1684,6 +1684,58 @@ done:
     free( inf_path );
 }
 
+/* Prefixes created from a prebuilt copy can miss the files of programs added
+ * later; installers only find programs that exist in the system directory. */
+static void install_missing_programs(void)
+{
+    static const WCHAR *programs[] = { L"grpconv.exe" };
+    static const char inf_head[] = "[version]\r\nsignature=\"$CHICAGO$\"\r\n"
+                                   "[DefaultInstall]\r\nWineFakeDlls=Files\r\n[Files]\r\n";
+    WCHAR sysdir[MAX_PATH], path[MAX_PATH], inf_path[MAX_PATH];
+    BOOL inf_written = FALSE;
+
+    for (int i = 0; machines[i].Machine; i++)
+    {
+        WORD machine = machines[i].Native ? IMAGE_FILE_MACHINE_TARGET_HOST : machines[i].Machine;
+        HANDLE process, file;
+        char line[64];
+        DWORD written;
+        BOOL missing = FALSE;
+        int j;
+
+        if (!GetSystemWow64Directory2W( sysdir, MAX_PATH, machine )) continue;
+        for (j = 0; j < ARRAY_SIZE(programs); j++)
+        {
+            swprintf( path, MAX_PATH, L"%s\\%s", sysdir, programs[j] );
+            if (GetFileAttributesW( path ) == INVALID_FILE_ATTRIBUTES) missing = TRUE;
+        }
+        if (!missing) continue;
+
+        if (!inf_written)
+        {
+            if (!GetTempPathW( MAX_PATH, path ) || !GetTempFileNameW( path, L"wbt", 0, inf_path )) return;
+            file = CreateFileW( inf_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL );
+            if (file == INVALID_HANDLE_VALUE) return;
+            WriteFile( file, inf_head, sizeof(inf_head) - 1, &written, NULL );
+            for (j = 0; j < ARRAY_SIZE(programs); j++)
+            {
+                int len = sprintf( line, "11,,%ls\r\n", programs[j] );
+                WriteFile( file, line, len, &written, NULL );
+            }
+            CloseHandle( file );
+            inf_written = TRUE;
+        }
+
+        TRACE( "installing missing programs for machine %x\n", machine );
+        if ((process = start_rundll32( inf_path, L"DefaultInstall", machine )))
+        {
+            WaitForSingleObject( process, 30000 );
+            CloseHandle( process );
+        }
+    }
+    if (inf_written) DeleteFileW( inf_path );
+}
+
 /* Process items in the StartUp group of the user's Programs under the Start Menu. Some installers put
  * shell links here to restart themselves after boot. */
 static BOOL ProcessStartupItems(void)
@@ -1889,6 +1941,7 @@ int __cdecl main( int argc, char *argv[] )
         start_services_process();
     }
     if (init || update) update_wineprefix( update );
+    if (init) install_missing_programs();
 
     create_volatile_environment_registry_key();
     create_known_dlls();

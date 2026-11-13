@@ -1695,6 +1695,7 @@ enable_fc
 enable_find
 enable_findstr
 enable_fsutil
+enable_grpconv
 enable_hh
 enable_hostname
 enable_icacls
@@ -23265,6 +23266,7 @@ wine_fn_config_makefile programs/findstr enable_findstr
 wine_fn_config_makefile programs/findstr/tests enable_tests
 wine_fn_config_makefile programs/fsutil enable_fsutil
 wine_fn_config_makefile programs/fsutil/tests enable_tests
+wine_fn_config_makefile programs/grpconv enable_grpconv
 wine_fn_config_makefile programs/hh enable_hh
 wine_fn_config_makefile programs/hostname enable_hostname
 wine_fn_config_makefile programs/icacls enable_icacls
