@@ -126,6 +126,9 @@ static LRESULT MPEG3_drvClose(DWORD_PTR dwDevID)
 }
 
 
+/* set in fdwDriver while a conversion without ACM_STREAMCONVERTF_END left input behind */
+#define MPEG3_STREAM_PENDING 0x1
+
 static void mp3_horse(mpg123_handle *handle, const unsigned char *src,
         DWORD *nsrc, unsigned char *dst, DWORD *ndst)
 {
@@ -519,10 +522,12 @@ static LRESULT MPEG3_StreamConvert(ACMDRVSTREAMINSTANCE *instance, ACMDRVSTREAMH
     }
     /* ACM_STREAMCONVERTF_BLOCKALIGN
      *	currently all conversions are block aligned, so do nothing for this flag
-     * ACM_STREAMCONVERTF_END
-     *	no pending data, so do nothing for this flag
+     * ACM_STREAMCONVERTF_START
+     *	only restart the decoder when input of an unfinished conversion is left;
+     *	some games convert every frame with START | END, and restarting would
+     *	drop the bit reservoir and the decoder delay of each frame
      */
-    if ((adsh->fdwConvert & ACM_STREAMCONVERTF_START))
+    if ((adsh->fdwConvert & ACM_STREAMCONVERTF_START) && (instance->fdwDriver & MPEG3_STREAM_PENDING))
     {
         mpg123_feedseek(handle, 0, SEEK_SET, NULL);
         mpg123_close(handle);
@@ -530,6 +535,8 @@ static LRESULT MPEG3_StreamConvert(ACMDRVSTREAMINSTANCE *instance, ACMDRVSTREAMH
     }
 
     mp3_horse(handle, adsh->pbSrc, &nsrc, adsh->pbDst, &ndst);
+    if (adsh->fdwConvert & ACM_STREAMCONVERTF_END) instance->fdwDriver &= ~MPEG3_STREAM_PENDING;
+    else instance->fdwDriver |= MPEG3_STREAM_PENDING;
     adsh->cbSrcLengthUsed = nsrc;
     adsh->cbDstLengthUsed = ndst;
 
