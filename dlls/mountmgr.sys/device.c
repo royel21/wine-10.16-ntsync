@@ -1394,6 +1394,21 @@ static enum mountmgr_fs_type get_mountmgr_fs_type(enum fs_type fs_type)
     }
 }
 
+/* use the label set in HKLM\\Software\\Wine\\Labels for this drive letter, if any */
+static void apply_label_override( struct volume *volume, int letter )
+{
+    WCHAR value_name[3] = { 'A' + letter, ':', 0 };
+    WCHAR reg_label[MAX_PATH];
+    DWORD type, size = sizeof(reg_label);
+    HKEY key;
+
+    if (letter < 0 || letter >= 26) return;
+    if (RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"Software\\Wine\\Labels", 0, KEY_QUERY_VALUE, &key )) return;
+    if (!RegQueryValueExW( key, value_name, NULL, &type, (BYTE *)reg_label, &size ) && type == REG_SZ)
+        lstrcpynW( volume->label, reg_label, ARRAY_SIZE(volume->label) );
+    RegCloseKey( key );
+}
+
 /* query information about an existing dos drive, by letter or udi */
 static struct volume *find_volume_by_letter( int letter )
 {
@@ -1454,24 +1469,7 @@ NTSTATUS query_unix_drive(void* buff, SIZE_T insize, SIZE_T outsize, IO_STATUS_B
 
     if (volume)
     {
-        HKEY key;
-        WCHAR value_name[3];
-        WCHAR reg_label[MAX_PATH];
-        const int label_len = 256;
-        DWORD type;
-        DWORD size = sizeof(reg_label);
-        value_name[0] = input->letter;
-        value_name[1] = ':';
-        value_name[2] = 0;
-
-        if (!RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\Wine\\Labels", 0, KEY_QUERY_VALUE, &key))
-        {
-            if (!RegQueryValueExW(key, value_name, NULL, &type, (BYTE*)reg_label, &size) && type == REG_SZ)
-            {
-                lstrcpynW(volume->label, reg_label, label_len);
-            }
-            RegCloseKey(key);
-        }
+        if (input->letter) apply_label_override(volume, towlower(input->letter) - 'a');
 
         device_type = volume->device->type;
         fs_type = get_mountmgr_fs_type(volume->fs_type);
@@ -1675,10 +1673,18 @@ static NTSTATUS WINAPI harddisk_query_volume( DEVICE_OBJECT *device, IRP *irp )
     {
 
         FILE_FS_VOLUME_INFORMATION *info = irp->AssociatedIrp.SystemBuffer;
+        struct dos_drive *drive;
 
         if (length < sizeof(FILE_FS_VOLUME_INFORMATION))
         {
             status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+
+        LIST_FOR_EACH_ENTRY( drive, &drives_list, struct dos_drive, entry )
+        {
+            if (drive->volume != volume) continue;
+            apply_label_override( volume, drive->drive );
             break;
         }
 
