@@ -501,10 +501,18 @@ HRESULT WINAPI BaseControlWindowImpl_put_Owner(IVideoWindow *iface, OAHWND owner
 
     window->hwndOwner = (HWND)owner;
     if (owner)
+    {
         SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_CHILD);
+        SetParent(hwnd, (HWND)owner);
+    }
     else
+    {
+        /* Unparent while still a child window: SetParent() activates a
+         * top-level window, which would take the foreground from the owner
+         * and wait on its thread. */
+        SetParent(hwnd, NULL);
         SetWindowLongPtrW(hwnd, GWL_STYLE, GetWindowLongPtrW(hwnd, GWL_STYLE) & ~WS_CHILD);
-    SetParent(hwnd, (HWND)owner);
+    }
 
     return S_OK;
 }
