@@ -4898,6 +4898,37 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
 }
 
 
+/* When a file is renamed to a name that differs only in case, the case-insensitive
+ * lookup finds the file itself. Use the requested case for the last component then,
+ * so that the file really gets renamed. */
+static void use_rename_target_case( HANDLE handle, const UNICODE_STRING *target, char **unix_name )
+{
+    const WCHAR *name = target->Buffer, *end = name + target->Length / sizeof(WCHAR), *p;
+    char buffer[MAX_DIR_ENTRY_LEN * 3 + 1], *slash, *new_name;
+    struct stat st_src, st_dst;
+    int fd, needs_close, len;
+
+    for (p = end; p > name && p[-1] != '\\'; p--) ;
+    if (p == end || end - p > MAX_DIR_ENTRY_LEN) return;
+    if (!(slash = strrchr( *unix_name, '/' ))) return;
+    if ((len = ntdll_wcstoumbs( p, end - p, buffer, sizeof(buffer) - 1, TRUE )) <= 0) return;
+    buffer[len] = 0;
+    if (!strcmp( slash + 1, buffer ) || strcasecmp( slash + 1, buffer )) return;
+
+    if (server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )) return;
+    if (!fstat( fd, &st_src ) && !stat( *unix_name, &st_dst ) &&
+        st_src.st_dev == st_dst.st_dev && st_src.st_ino == st_dst.st_ino &&
+        (new_name = malloc( slash - *unix_name + len + 2 )))
+    {
+        memcpy( new_name, *unix_name, slash - *unix_name + 1 );
+        strcpy( new_name + (slash - *unix_name) + 1, buffer );
+        free( *unix_name );
+        *unix_name = new_name;
+    }
+    if (needs_close) close( fd );
+}
+
+
 /******************************************************************************
  *              NtSetInformationFile   (NTDLL.@)
  */
@@ -5156,6 +5187,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             name_str.MaximumLength = info->FileNameLength + sizeof(WCHAR);
             InitializeObjectAttributes( &attr, &name_str, OBJ_CASE_INSENSITIVE, info->RootDirectory, NULL );
             status = get_nt_and_unix_names( &attr, &nt_name, &unix_name, FILE_OPEN_IF );
+            if (status == STATUS_SUCCESS) use_rename_target_case( handle, attr.ObjectName, &unix_name );
             if (status == STATUS_SUCCESS || status == STATUS_NO_SUCH_FILE)
             {
                 SERVER_START_REQ( set_fd_name_info )
