@@ -22,11 +22,36 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 
 #include "wine/debug.h"
 #include "main.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(regedit);
+
+/* a double-clicked .reg file is opened through the shell, while batch files run regedit from
+ * cmd.exe and should not stop at a message box */
+static BOOL started_from_cmd(void)
+{
+    PROCESSENTRY32W entry = { sizeof(entry) };
+    DWORD pid = GetCurrentProcessId(), parent = 0;
+    HANDLE snapshot = CreateToolhelp32Snapshot( TH32CS_SNAPPROCESS, 0 );
+    BOOL ret = FALSE;
+
+    if (snapshot == INVALID_HANDLE_VALUE) return FALSE;
+    if (Process32FirstW( snapshot, &entry ))
+    {
+        do if (entry.th32ProcessID == pid) { parent = entry.th32ParentProcessID; break; }
+        while (Process32NextW( snapshot, &entry ));
+    }
+    if (parent && Process32FirstW( snapshot, &entry ))
+    {
+        do if (entry.th32ProcessID == parent) { ret = !lstrcmpiW( entry.szExeFile, L"cmd.exe" ); break; }
+        while (Process32NextW( snapshot, &entry ));
+    }
+    CloseHandle( snapshot );
+    return ret;
+}
 
 static BOOL silent;
 
@@ -139,7 +164,15 @@ static void PerformRegAction(REGEDIT_ACTION action, WCHAR **argv, int *i)
                     return;
                 }
             }
-            import_registry_file(reg_file);
+            if (import_registry_file(reg_file))
+            {
+                /* like Windows, tell the user unless /s was given */
+                if (!silent && realname && !started_from_cmd())
+                    messagebox(NULL, MB_OK | MB_ICONINFORMATION, IDS_APP_TITLE,
+                               IDS_IMPORT_SUCCESSFUL, realname);
+            }
+            else if (!silent && realname && !started_from_cmd())
+                messagebox(NULL, MB_OK | MB_ICONERROR, IDS_APP_TITLE, IDS_IMPORT_FAILED, realname);
             if (realname)
             {
                 free(realname);
