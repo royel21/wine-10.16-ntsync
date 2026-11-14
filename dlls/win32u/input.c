@@ -1985,6 +1985,18 @@ static HWND set_focus_window( HWND hwnd )
     return previous;
 }
 
+/* Windows only sends the palette messages on activation when the display uses a palette. */
+static BOOL is_palette_display(void)
+{
+    HDC hdc = NtUserGetDCEx( 0, 0, DCX_CACHE | DCX_WINDOW );
+    BOOL ret;
+
+    if (!hdc) return FALSE;
+    ret = !!(NtGdiGetDeviceCaps( hdc, RASTERCAPS ) & RC_PALETTE);
+    NtUserReleaseDC( 0, hdc );
+    return ret;
+}
+
 /*******************************************************************
  *		set_active_window
  */
@@ -2029,7 +2041,7 @@ BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus, DWORD new
         NtUserNotifyWinEvent( EVENT_SYSTEM_FOREGROUND, hwnd, 0, 0 );
 
         /* send palette messages */
-        if (send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
+        if (is_palette_display() && send_message( hwnd, WM_QUERYNEWPALETTE, 0, 0 ))
             send_message_timeout( HWND_BROADCAST, WM_PALETTEISCHANGING, (WPARAM)hwnd, 0,
                                   SMTO_ABORTIFHUNG, 2000, FALSE );
         if (!is_window(hwnd)) return FALSE;
