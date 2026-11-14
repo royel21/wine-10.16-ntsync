@@ -26,6 +26,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
+#include "winreg.h"
 #include "wincontypes.h"
 #include "winternl.h"
 
@@ -355,6 +356,103 @@ static NTSTATUS create_nt_process( HANDLE token, HANDLE debug, SECURITY_ATTRIBUT
 }
 
 
+/* returns the arguments that follow the program name in a command line */
+static const WCHAR *skip_program_name( const WCHAR *cmdline )
+{
+    const WCHAR *p = cmdline;
+    BOOL quoted = FALSE;
+
+    while (*p == ' ' || *p == '\t') p++;
+    for (; *p; p++)
+    {
+        if (*p == '"') quoted = !quoted;
+        else if (!quoted && (*p == ' ' || *p == '\t')) break;
+    }
+    while (*p == ' ' || *p == '\t') p++;
+    return p;
+}
+
+static BOOL ntvdm64_value_matches( HKEY key, const WCHAR *name )
+{
+    WCHAR buffer[4];
+    DWORD size = sizeof(buffer);
+    LSTATUS res = RegGetValueW( key, NULL, name, RRF_RT_REG_SZ, NULL, buffer, &size );
+
+    /* matching on version resources is not supported, only on "*" */
+    if (res == ERROR_FILE_NOT_FOUND) return TRUE;
+    return !res && !wcscmp( buffer, L"*" );
+}
+
+/* expand an NtVdm64 command line template: %m is the 16-bit module, %c its arguments */
+static WCHAR *expand_ntvdm64_cmdline( const WCHAR *vdm, const WCHAR *template,
+                                      const WCHAR *module, const WCHAR *args )
+{
+    const WCHAR *p;
+    WCHAR *ret, *out;
+    SIZE_T len = lstrlenW( vdm ) + 3;
+
+    for (p = template; *p; p++)
+    {
+        if (p[0] == '%' && p[1] == 'm') { len += lstrlenW( module ); p++; }
+        else if (p[0] == '%' && p[1] == 'c') { len += lstrlenW( args ); p++; }
+        else len++;
+    }
+    if (!(ret = RtlAllocateHeap( GetProcessHeap(), 0, len * sizeof(WCHAR) ))) return NULL;
+
+    out = ret;
+    *out++ = '"';
+    lstrcpyW( out, vdm );
+    out += lstrlenW( vdm );
+    *out++ = '"';
+    for (p = template; *p; p++)
+    {
+        if (p[0] == '%' && p[1] == 'm') { lstrcpyW( out, module ); out += lstrlenW( module ); p++; }
+        else if (p[0] == '%' && p[1] == 'c') { lstrcpyW( out, args ); out += lstrlenW( args ); p++; }
+        else *out++ = *p;
+    }
+    *out = 0;
+    return ret;
+}
+
+/* find a 16-bit emulator registered under NtVdm64, as 64-bit Windows does */
+static WCHAR *get_ntvdm64_cmdline( const WCHAR *module, const WCHAR *args, WCHAR *vdm )
+{
+    WCHAR name[256], template[1024];
+    WCHAR *ret = NULL;
+    HKEY root, key;
+    DWORD i, len, size;
+
+    if (RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows NT\\CurrentVersion\\NtVdm64",
+                       0, KEY_READ | KEY_WOW64_64KEY, &root ))
+        return NULL;
+
+    for (i = 0; !ret; i++)
+    {
+        len = ARRAY_SIZE(name);
+        if (RegEnumKeyExW( root, i, name, &len, NULL, NULL, NULL, NULL )) break;
+        if (RegOpenKeyExW( root, name, 0, KEY_READ, &key )) continue;
+
+        size = MAX_PATH * sizeof(WCHAR);
+        if (ntvdm64_value_matches( key, L"InternalName" ) &&
+            ntvdm64_value_matches( key, L"ProductName" ) &&
+            ntvdm64_value_matches( key, L"ProductVersion" ) &&
+            !RegGetValueW( key, NULL, L"MappedExeName", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                           NULL, vdm, &size ) &&
+            GetFileAttributesW( vdm ) != INVALID_FILE_ATTRIBUTES)
+        {
+            size = sizeof(template);
+            if (RegGetValueW( key, NULL, L"CommandLine", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                              NULL, template, &size ))
+                lstrcpyW( template, L" \"%m\" %c" );
+            ret = expand_ntvdm64_cmdline( vdm, template, module, args );
+            TRACE( "using %s from NtVdm64 key %s\n", debugstr_w(ret), debugstr_w(name) );
+        }
+        RegCloseKey( key );
+    }
+    RegCloseKey( root );
+    return ret;
+}
+
 /***********************************************************************
  *           create_vdm_process
  */
@@ -363,12 +461,42 @@ static NTSTATUS create_vdm_process( HANDLE token, HANDLE debug, SECURITY_ATTRIBU
                                     RTL_USER_PROCESS_PARAMETERS *params,
                                     RTL_USER_PROCESS_INFORMATION *info )
 {
+    /* otvdm in the places where it is usually installed, when nothing registered it */
+    static const WCHAR * const otvdm_paths[] =
+    {
+        L"C:\\otvdm\\otvdmw.exe",
+        L"C:\\otvdm\\otvdm.exe",
+        L"Z:\\opt\\apps\\otvdm\\otvdmw.exe",
+        L"Z:\\opt\\apps\\otvdm\\otvdm.exe",
+    };
     const WCHAR *winevdm = (is_win64 || is_wow64 ?
                             L"C:\\windows\\syswow64\\winevdm.exe" :
                             L"C:\\windows\\system32\\winevdm.exe");
+    WCHAR vdm[MAX_PATH];
     WCHAR *newcmdline;
     NTSTATUS status;
-    UINT len;
+    UINT i, len;
+
+    if ((newcmdline = get_ntvdm64_cmdline( params->ImagePathName.Buffer,
+                                           skip_program_name( params->CommandLine.Buffer ), vdm )))
+    {
+        RtlInitUnicodeString( &params->ImagePathName, vdm );
+        RtlInitUnicodeString( &params->CommandLine, newcmdline );
+        status = create_nt_process( token, debug, psa, tsa, flags, params, info, 0, 0, NULL, NULL );
+        HeapFree( GetProcessHeap(), 0, newcmdline );
+        return status;
+    }
+
+    if (GetFileAttributesW( winevdm ) == INVALID_FILE_ATTRIBUTES)
+    {
+        for (i = 0; i < ARRAY_SIZE(otvdm_paths); i++)
+        {
+            if (GetFileAttributesW( otvdm_paths[i] ) == INVALID_FILE_ATTRIBUTES) continue;
+            winevdm = otvdm_paths[i];
+            TRACE( "using %s\n", debugstr_w(winevdm) );
+            break;
+        }
+    }
 
     len = (lstrlenW(params->ImagePathName.Buffer) + lstrlenW(params->CommandLine.Buffer) +
            lstrlenW(winevdm) + 16);
@@ -376,7 +504,7 @@ static NTSTATUS create_vdm_process( HANDLE token, HANDLE debug, SECURITY_ATTRIBU
     if (!(newcmdline = RtlAllocateHeap( GetProcessHeap(), 0, len * sizeof(WCHAR) )))
         return STATUS_NO_MEMORY;
 
-    swprintf( newcmdline, len, L"%s --app-name \"%s\" %s",
+    swprintf( newcmdline, len, L"\"%s\" --app-name \"%s\" %s",
               winevdm, params->ImagePathName.Buffer, params->CommandLine.Buffer );
     RtlInitUnicodeString( &params->ImagePathName, winevdm );
     RtlInitUnicodeString( &params->CommandLine, newcmdline );
