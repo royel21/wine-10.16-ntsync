@@ -3446,6 +3446,18 @@ BOOL WINAPI NtUserWaitMessage(void)
     return NtUserMsgWaitForMultipleObjectsEx( 0, NULL, INFINITE, QS_ALLINPUT, 0 ) != WAIT_FAILED;
 }
 
+/* Windows passes the timer procedure itself in the lParam of WM_TIMER, not our winproc
+ * handle; 16-bit layers treat 0xffffxxxx values as their own procedures. */
+static void get_timer_proc_param( MSG *msg )
+{
+    WNDPROC proc;
+
+    if (msg->message != WM_TIMER || !msg->lParam) return;
+    proc = get_winproc( (WNDPROC)msg->lParam, TRUE );
+    if (proc == (WNDPROC)msg->lParam) proc = get_winproc( proc, FALSE );
+    msg->lParam = (LPARAM)proc;
+}
+
 /***********************************************************************
  *           NtUserPeekMessage  (win32u.@)
  */
@@ -3491,6 +3503,7 @@ BOOL WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, U
         RtlSetLastWin32Error( ERROR_NOACCESS );
         return FALSE;
     }
+    get_timer_proc_param( &msg );
     *msg_out = msg;
     return TRUE;
 }
@@ -3528,6 +3541,7 @@ BOOL WINAPI NtUserGetMessage( MSG *msg, HWND hwnd, UINT first, UINT last )
     if (ret < 0) return -1;
 
     check_for_driver_events();
+    get_timer_proc_param( msg );
 
     return msg->message != WM_QUIT;
 }
@@ -3919,7 +3933,8 @@ LRESULT WINAPI NtUserDispatchMessage( const MSG *msg )
     /* Process timer messages */
     if (msg->lParam && msg->message == WM_TIMER)
     {
-        params.func = (WNDPROC)msg->lParam;
+        /* the lParam is the timer procedure itself; find its winproc */
+        params.func = alloc_winproc( (WNDPROC)msg->lParam, TRUE );
         if (!init_win_proc_params( &params, msg->hwnd, msg->message,
                                    msg->wParam, NtGetTickCount(), FALSE ))
             return 0;
