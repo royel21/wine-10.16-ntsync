@@ -1210,7 +1210,8 @@ static HRESULT WINAPI basic_video_GetCurrentImage(IBasicVideo *iface, LONG *size
 
     TRACE("window %p, size %p, image %p.\n", window, size, image);
 
-    if (!size || !image)
+    /* a NULL image asks for the buffer size */
+    if (!size)
         return E_POINTER;
 
     return window->ops->get_current_image(window, size, image);
