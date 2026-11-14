@@ -72,8 +72,10 @@ static int launch_app( const WCHAR *candidates, const WCHAR *unix_arg, const WCH
         parameters = NULL;
         if (num_args > 1) {
             size = 0;
-            for (i = 1; i < num_args; i++) size += lstrlenW( args[i] );
-            parameters = malloc(sizeof(WCHAR) * size + 2 * sizeof(WCHAR));
+            /* each extra argument plus a space, then argv1 and the terminator */
+            for (i = 1; i < num_args; i++) size += lstrlenW( args[i] ) + 1;
+            size += lstrlenW( argv1 ) + 1;
+            parameters = malloc( size * sizeof(WCHAR) );
             
             for (i = 1, j = 0, k = 0; i < num_args; i++) {
                 for (k = 0; k < lstrlenW( args[i] ); k++) parameters[j++] = args[i][k];
