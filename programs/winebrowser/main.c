@@ -39,8 +39,20 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winebrowser);
 
+/* Windows browsers need the Windows path of a local file; winhandler.exe passes the
+ * URL on to the host and, like unix apps, needs the unix one. */
+static BOOL needs_windows_path( const WCHAR *app )
+{
+    const WCHAR *name = wcsrchr( app, '\\' );
+    int len;
+
+    name = name ? name + 1 : app;
+    len = lstrlenW( name );
+    return len > 4 && !wcsicmp( name + len - 4, L".exe" ) && wcsicmp( name, L"winhandler.exe" );
+}
+
 /* try to launch a win32 app from a comma separated string of app names */
-static int launch_app( const WCHAR *candidates, const WCHAR *argv1 )
+static int launch_app( const WCHAR *candidates, const WCHAR *unix_arg, const WCHAR *win_arg )
 {   
     int i, j, k, size, num_args;
     WCHAR *parameters;
@@ -48,8 +60,9 @@ static int launch_app( const WCHAR *candidates, const WCHAR *argv1 )
     while (*candidates)
     {
         WCHAR **args = CommandLineToArgvW( candidates, &num_args );
-        
-        TRACE( "Trying %s\n", debugstr_w( candidates ) );
+        const WCHAR *argv1 = (win_arg && needs_windows_path( args[0] )) ? win_arg : unix_arg;
+
+        TRACE( "Trying %s with %s\n", debugstr_w( candidates ), debugstr_w( argv1 ) );
         
         parameters = NULL;
         if (num_args > 1) {
@@ -72,7 +85,7 @@ static int launch_app( const WCHAR *candidates, const WCHAR *argv1 )
         if (parameters) free( parameters );
         candidates += lstrlenW( candidates ) + 1;  /* grab the next app */
     }
-    WINE_ERR( "could not find a suitable app to open %s\n", debugstr_w( argv1 ));
+    WINE_ERR( "could not find a suitable app to open %s\n", debugstr_w( unix_arg ));
 
     return 1;
 }
@@ -93,7 +106,7 @@ static LSTATUS get_commands( HKEY key, const WCHAR *value, WCHAR *buffer, DWORD 
     return res;
 }
 
-static int open_http_url( const WCHAR *url )
+static int open_http_url( const WCHAR *url, const WCHAR *win_url )
 {
     WCHAR browsers[256];
     HKEY key;
@@ -108,7 +121,7 @@ static int open_http_url( const WCHAR *url )
     if (r != ERROR_SUCCESS)
         return 1;
 
-    return launch_app( browsers, url );
+    return launch_app( browsers, url, win_url );
 }
 
 static int open_mailto_url( const WCHAR *url )
@@ -126,7 +139,7 @@ static int open_mailto_url( const WCHAR *url )
     if (r != ERROR_SUCCESS)
         return 1;
 
-    return launch_app( mailers, url );
+    return launch_app( mailers, url, NULL );
 }
 
 static int open_invalid_url( const WCHAR *url )
@@ -144,7 +157,7 @@ static int open_invalid_url( const WCHAR *url )
     lstrcpyW( url_prefixed, L"http://" );
     lstrcatW( url_prefixed, url );
 
-    ret = open_http_url( url_prefixed );
+    ret = open_http_url( url_prefixed, NULL );
     free( url_prefixed );
     return ret;
 }
@@ -393,5 +406,5 @@ int wmain(int argc, WCHAR *argv[])
         return open_mailto_url(display_uri);
     else
         /* let the browser decide how to handle the given url */
-        return open_http_url(display_uri);
+        return open_http_url(display_uri, scheme == URL_SCHEME_FILE ? url : NULL);
 }
