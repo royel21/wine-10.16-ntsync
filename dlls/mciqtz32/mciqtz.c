@@ -1114,24 +1114,21 @@ static DWORD MCIQTZ_mciUpdate(UINT wDevID, DWORD dwFlags, LPMCI_DGV_UPDATE_PARMS
         BITMAPINFO *info;
         HRESULT hr;
         RECT src, dest;
-        LONG visible = OATRUE;
 
         res = MCIERR_INTERNAL;
         IMediaControl_GetState(wma->pmctrl, -1, &state);
         if (state == State_Running)
             return MCIERR_UNSUPPORTED_FUNCTION;
-        /* If in stopped state, nothing has been drawn to screen
-         * moving to pause, which is needed for the old dib renderer, will result
-         * in a single frame drawn, so hide the window here */
-        IVideoWindow_get_Visible(wma->vidwin, &visible);
-        if (wma->parent)
-            IVideoWindow_put_Visible(wma->vidwin, OAFALSE);
+        /* Moving to pause from stop draws the first frame, which is what is painted here
+         * anyway. Don't hide and show the video window around it: that invalidates the
+         * parent, which sends this again from its WM_PAINT, and the paints starve the
+         * application's message loop. */
         /* FIXME: Should we check the original state and restore it? */
         IMediaControl_Pause(wma->pmctrl);
         IMediaControl_GetState(wma->pmctrl, -1, &state);
         if (FAILED(hr = IBasicVideo_GetCurrentImage(wma->vidbasic, &size, NULL))) {
             WARN("Could not get image size (hr = %lx)\n", hr);
-            goto out;
+            return res;
         }
         data = HeapAlloc(GetProcessHeap(), 0, size);
         info = (BITMAPINFO*)data;
@@ -1146,9 +1143,6 @@ static DWORD MCIQTZ_mciUpdate(UINT wDevID, DWORD dwFlags, LPMCI_DGV_UPDATE_PARMS
               data, info, DIB_RGB_COLORS, SRCCOPY);
         HeapFree(GetProcessHeap(), 0, data);
         res = 0;
-out:
-        if (wma->parent)
-            IVideoWindow_put_Visible(wma->vidwin, visible);
     }
     else if (dwFlags)
         FIXME("Unhandled flags %lx\n", dwFlags);
