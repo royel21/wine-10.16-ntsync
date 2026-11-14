@@ -794,8 +794,14 @@ static HRESULT surface_cpu_blt(struct wined3d_texture *dst_texture, unsigned int
     if (filter != WINED3D_TEXF_NONE && filter != WINED3D_TEXF_POINT
             && (src_width != dst_width || src_height != dst_height))
     {
-        /* Can happen when d3d9 apps do a StretchRect() call which isn't handled in GL. */
-        FIXME("Filter %s not supported in software blit.\n", debug_d3dtexturefiltertype(filter));
+        static int once;
+
+        /* Can happen when d3d9 apps do a StretchRect() call which isn't handled in GL.
+         * Videos stretched every frame would repeat this, so report it once. */
+        if (!once++)
+            FIXME("Filter %s not supported in software blit.\n", debug_d3dtexturefiltertype(filter));
+        else
+            TRACE("Filter %s not supported in software blit.\n", debug_d3dtexturefiltertype(filter));
     }
 
     xinc = (src_width << 16) / dst_width;
