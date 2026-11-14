@@ -39,20 +39,25 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winebrowser);
 
-/* Windows browsers need the Windows path of a local file; winhandler.exe passes the
- * URL on to the host and, like unix apps, needs the unix one. */
-static BOOL needs_windows_path( const WCHAR *app )
+/* Pick the form of a local file's URL that the app can open: Windows browsers need the
+ * Windows path, winhandler.exe hands the URL to the host, which maps the drive letters
+ * itself, so it gets a file URL of the Windows path; unix apps get the unix file URL. */
+static const WCHAR *get_app_arg( const WCHAR *app, const WCHAR *unix_arg, const WCHAR *win_arg,
+                                 const WCHAR *handler_arg )
 {
     const WCHAR *name = wcsrchr( app, '\\' );
     int len;
 
     name = name ? name + 1 : app;
     len = lstrlenW( name );
-    return len > 4 && !wcsicmp( name + len - 4, L".exe" ) && wcsicmp( name, L"winhandler.exe" );
+    if (!wcsicmp( name, L"winhandler.exe" )) return handler_arg ? handler_arg : unix_arg;
+    if (len > 4 && !wcsicmp( name + len - 4, L".exe" )) return win_arg ? win_arg : unix_arg;
+    return unix_arg;
 }
 
 /* try to launch a win32 app from a comma separated string of app names */
-static int launch_app( const WCHAR *candidates, const WCHAR *unix_arg, const WCHAR *win_arg )
+static int launch_app( const WCHAR *candidates, const WCHAR *unix_arg, const WCHAR *win_arg,
+                       const WCHAR *handler_arg )
 {   
     int i, j, k, size, num_args;
     WCHAR *parameters;
@@ -60,7 +65,7 @@ static int launch_app( const WCHAR *candidates, const WCHAR *unix_arg, const WCH
     while (*candidates)
     {
         WCHAR **args = CommandLineToArgvW( candidates, &num_args );
-        const WCHAR *argv1 = (win_arg && needs_windows_path( args[0] )) ? win_arg : unix_arg;
+        const WCHAR *argv1 = get_app_arg( args[0], unix_arg, win_arg, handler_arg );
 
         TRACE( "Trying %s with %s\n", debugstr_w( candidates ), debugstr_w( argv1 ) );
         
@@ -106,7 +111,7 @@ static LSTATUS get_commands( HKEY key, const WCHAR *value, WCHAR *buffer, DWORD 
     return res;
 }
 
-static int open_http_url( const WCHAR *url, const WCHAR *win_url )
+static int open_http_url( const WCHAR *url, const WCHAR *win_url, const WCHAR *handler_url )
 {
     WCHAR browsers[256];
     HKEY key;
@@ -121,7 +126,7 @@ static int open_http_url( const WCHAR *url, const WCHAR *win_url )
     if (r != ERROR_SUCCESS)
         return 1;
 
-    return launch_app( browsers, url, win_url );
+    return launch_app( browsers, url, win_url, handler_url );
 }
 
 static int open_mailto_url( const WCHAR *url )
@@ -139,7 +144,7 @@ static int open_mailto_url( const WCHAR *url )
     if (r != ERROR_SUCCESS)
         return 1;
 
-    return launch_app( mailers, url, NULL );
+    return launch_app( mailers, url, NULL, NULL );
 }
 
 static int open_invalid_url( const WCHAR *url )
@@ -157,7 +162,7 @@ static int open_invalid_url( const WCHAR *url )
     lstrcpyW( url_prefixed, L"http://" );
     lstrcatW( url_prefixed, url );
 
-    ret = open_http_url( url_prefixed, NULL );
+    ret = open_http_url( url_prefixed, NULL, NULL );
     free( url_prefixed );
     return ret;
 }
@@ -335,7 +340,23 @@ static WCHAR *encode_unix_path(const char *src)
     return dst;
 }
 
-static WCHAR *convert_file_uri(IUri *uri)
+/* file URL of a Windows path, e.g. file:///C:/dir/name.html, percent-encoded as UTF-8 */
+static WCHAR *get_dos_file_url( const WCHAR *path )
+{
+    int len = WideCharToMultiByte( CP_UTF8, 0, path, -1, NULL, 0, NULL, NULL );
+    WCHAR *url;
+    char *buffer, *p;
+
+    if (!(buffer = malloc( len + 1 ))) return NULL;
+    buffer[0] = '/';
+    WideCharToMultiByte( CP_UTF8, 0, path, -1, buffer + 1, len, NULL, NULL );
+    for (p = buffer; *p; p++) if (*p == '\\') *p = '/';
+    url = encode_unix_path( buffer );
+    free( buffer );
+    return url;
+}
+
+static WCHAR *convert_file_uri(IUri *uri, WCHAR **dos_url)
 {
     char *buffer;
     WCHAR *new_path = NULL;
@@ -351,8 +372,9 @@ static WCHAR *convert_file_uri(IUri *uri)
     if (GetFileAttributesW( filename ) == INVALID_FILE_ATTRIBUTES) return NULL;
     if (!(buffer = wine_get_unix_file_name( filename ))) return NULL;
     new_path = encode_unix_path( buffer );
+    *dos_url = get_dos_file_url( filename );
 
-    WINE_TRACE("New path: %s\n", wine_dbgstr_w(new_path));
+    WINE_TRACE("New path: %s, Windows URL %s\n", wine_dbgstr_w(new_path), wine_dbgstr_w(*dos_url));
 
     return new_path;
 }
@@ -364,6 +386,7 @@ int wmain(int argc, WCHAR *argv[])
 {
     WCHAR *url = argv[1];
     BSTR display_uri = NULL;
+    WCHAR *dos_url = NULL;
     DWORD scheme;
     IUri *uri;
     HRESULT hres;
@@ -388,7 +411,7 @@ int wmain(int argc, WCHAR *argv[])
     IUri_GetScheme(uri, &scheme);
 
     if(scheme == URL_SCHEME_FILE) {
-        display_uri = convert_file_uri(uri);
+        display_uri = convert_file_uri(uri, &dos_url);
         if(!display_uri) {
             WINE_ERR("Failed to convert file URL to unix path\n");
         }
@@ -406,5 +429,5 @@ int wmain(int argc, WCHAR *argv[])
         return open_mailto_url(display_uri);
     else
         /* let the browser decide how to handle the given url */
-        return open_http_url(display_uri, scheme == URL_SCHEME_FILE ? url : NULL);
+        return open_http_url(display_uri, scheme == URL_SCHEME_FILE ? url : NULL, dos_url);
 }
