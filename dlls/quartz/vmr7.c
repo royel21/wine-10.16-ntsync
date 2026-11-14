@@ -515,10 +515,179 @@ static void vmr_get_default_rect(struct video_window *iface, RECT *rect)
     SetRect(rect, 0, 0, bitmap_header->biWidth, bitmap_header->biHeight);
 }
 
+static BYTE clip_byte(int value)
+{
+    return value < 0 ? 0 : value > 255 ? 255 : value;
+}
+
+/* BT.601 studio range, as used by the video decoders */
+static DWORD yuv_to_rgb(int y, int u, int v)
+{
+    int c = 298 * (y - 16) + 128, d = u - 128, e = v - 128;
+
+    return clip_byte((c + 409 * e) >> 8) << 16
+            | clip_byte((c - 100 * d - 208 * e) >> 8) << 8
+            | clip_byte((c + 516 * d) >> 8);
+}
+
+static BYTE mask_to_byte(DWORD pixel, DWORD mask)
+{
+    unsigned int shift = 0, bits = 0;
+
+    if (!mask)
+        return 0;
+    while (!(mask & (1u << shift)))
+        ++shift;
+    while (shift + bits < 32 && (mask & (1u << (shift + bits))))
+        ++bits;
+    if (bits >= 8)
+        return (pixel & mask) >> (shift + bits - 8);
+    return ((pixel & mask) >> shift) * 255 / ((1u << bits) - 1);
+}
+
+/* converts one top-down row of the surface to 32-bit RGB */
+static void convert_row(const DDSURFACEDESC2 *desc, unsigned int y, unsigned int width,
+        unsigned int height, DWORD *dst)
+{
+    const DDPIXELFORMAT *format = &desc->ddpfPixelFormat;
+    const BYTE *base = desc->lpSurface, *row = base + y * desc->lPitch;
+    unsigned int x;
+
+    if (!(format->dwFlags & DDPF_FOURCC))
+    {
+        unsigned int bpp = format->dwRGBBitCount / 8;
+
+        for (x = 0; x < width; ++x)
+        {
+            const BYTE *p = row + x * bpp;
+            DWORD pixel = 0;
+
+            memcpy(&pixel, p, bpp);
+            dst[x] = mask_to_byte(pixel, format->dwRBitMask) << 16
+                    | mask_to_byte(pixel, format->dwGBitMask) << 8
+                    | mask_to_byte(pixel, format->dwBBitMask);
+        }
+        return;
+    }
+
+    switch (format->dwFourCC)
+    {
+        case MAKEFOURCC('Y','U','Y','2'):
+        case MAKEFOURCC('U','Y','V','Y'):
+        {
+            BOOL uyvy = format->dwFourCC == MAKEFOURCC('U','Y','V','Y');
+
+            for (x = 0; x < width; ++x)
+            {
+                const BYTE *p = row + (x & ~1) * 2;
+                int luma = uyvy ? p[1 + (x & 1) * 2] : p[(x & 1) * 2];
+                int u = uyvy ? p[0] : p[1], v = uyvy ? p[2] : p[3];
+
+                dst[x] = yuv_to_rgb(luma, u, v);
+            }
+            break;
+        }
+
+        case MAKEFOURCC('N','V','1','2'):
+        {
+            const BYTE *chroma = base + height * desc->lPitch + (y / 2) * desc->lPitch;
+
+            for (x = 0; x < width; ++x)
+                dst[x] = yuv_to_rgb(row[x], chroma[x & ~1], chroma[(x & ~1) + 1]);
+            break;
+        }
+
+        case MAKEFOURCC('Y','V','1','2'):
+        {
+            const BYTE *v_plane = base + height * desc->lPitch;
+            const BYTE *u_plane = v_plane + (height / 2) * (desc->lPitch / 2);
+            const BYTE *v_row = v_plane + (y / 2) * (desc->lPitch / 2);
+            const BYTE *u_row = u_plane + (y / 2) * (desc->lPitch / 2);
+
+            for (x = 0; x < width; ++x)
+                dst[x] = yuv_to_rgb(row[x], u_row[x / 2], v_row[x / 2]);
+            break;
+        }
+
+        default:
+            FIXME("Unhandled surface format %#lx.\n", format->dwFourCC);
+            memset(dst, 0, width * sizeof(*dst));
+            break;
+    }
+}
+
+/* Like native, return the last rendered frame as a 32-bit bottom-up bitmap,
+ * whatever format the pin was connected with. */
 static HRESULT vmr_get_current_image(struct video_window *iface, LONG *size, LONG *image)
 {
-    FIXME("stub!\n");
-    return E_NOTIMPL;
+    struct vmr7 *filter = impl_from_video_window(iface);
+    DDSURFACEDESC2 desc = {.dwSize = sizeof(desc)};
+    IDirectDrawSurface7 *surface;
+    BITMAPINFOHEADER bih;
+    unsigned int width, height, y;
+    DWORD *bits;
+    HRESULT hr;
+
+    EnterCriticalSection(&filter->renderer.filter.stream_cs);
+
+    if (!filter->renderer.sink.pin.peer)
+    {
+        LeaveCriticalSection(&filter->renderer.filter.stream_cs);
+        return VFW_E_NOT_CONNECTED;
+    }
+
+    bih = *get_filter_bitmap_header(filter);
+    width = bih.biWidth;
+    height = abs(bih.biHeight);
+    bih.biHeight = height;
+    bih.biBitCount = 32;
+    bih.biCompression = BI_RGB;
+    bih.biSizeImage = width * height * 4;
+
+    if (!image)
+    {
+        *size = sizeof(BITMAPINFOHEADER) + bih.biSizeImage;
+        LeaveCriticalSection(&filter->renderer.filter.stream_cs);
+        return S_OK;
+    }
+
+    if (!filter->surfaces || !filter->surface_count)
+    {
+        LeaveCriticalSection(&filter->renderer.filter.stream_cs);
+        return E_UNEXPECTED;
+    }
+
+    if (*size < sizeof(BITMAPINFOHEADER) + bih.biSizeImage)
+    {
+        LeaveCriticalSection(&filter->renderer.filter.stream_cs);
+        return E_OUTOFMEMORY;
+    }
+
+    surface = filter->surfaces[filter->surface_index % filter->surface_count];
+    if (FAILED(hr = IDirectDrawSurface7_Lock(surface, NULL, &desc, DDLOCK_READONLY | DDLOCK_WAIT, NULL)))
+    {
+        ERR("Failed to lock surface, hr %#lx.\n", hr);
+        LeaveCriticalSection(&filter->renderer.filter.stream_cs);
+        return hr;
+    }
+
+    memcpy(image, &bih, sizeof(bih));
+    bits = (DWORD *)((BYTE *)image + sizeof(bih));
+    for (y = 0; y < height; ++y)
+    {
+        DWORD *dst = bits + (height - 1 - y) * width;
+
+        if (y < desc.dwHeight)
+            convert_row(&desc, y, min(width, desc.dwWidth), desc.dwHeight, dst);
+        else
+            memset(dst, 0, width * sizeof(*dst));
+        if (width > desc.dwWidth)
+            memset(dst + desc.dwWidth, 0, (width - desc.dwWidth) * sizeof(*dst));
+    }
+
+    IDirectDrawSurface7_Unlock(surface, NULL);
+    LeaveCriticalSection(&filter->renderer.filter.stream_cs);
+    return S_OK;
 }
 
 static const struct video_window_ops window_ops =
