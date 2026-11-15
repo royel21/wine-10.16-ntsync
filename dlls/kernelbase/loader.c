@@ -312,7 +312,22 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetModuleFileNameW( HMODULE module, LPWSTR filena
     name.Buffer = filename;
     name.MaximumLength = min( size, UNICODE_STRING_MAX_CHARS ) * sizeof(WCHAR);
     status = LdrGetDllFullName( module, &name );
-    if (!status || status == STATUS_BUFFER_TOO_SMALL) len = name.Length / sizeof(WCHAR);
+    if (!status || status == STATUS_BUFFER_TOO_SMALL)
+    {
+        len = name.Length / sizeof(WCHAR);
+#ifdef __i386__
+        /* 32-bit system modules live in syswow64 on 64-bit Windows; some copy
+         * protections compare against GetSystemWow64Directory(). */
+        if (is_wow64)
+        {
+            static const WCHAR sys32[] = L"C:\\windows\\system32\\";
+            const DWORD prefix_len = ARRAY_SIZE(sys32) - 1;
+
+            if (len > prefix_len && !wcsnicmp( filename, sys32, prefix_len ))
+                memcpy( filename + 11, L"syswow64", 8 * sizeof(WCHAR) );
+        }
+#endif
+    }
     SetLastError( RtlNtStatusToDosError( status ));
 done:
     TRACE( "%s\n", debugstr_wn(filename, len) );
