@@ -32,6 +32,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <errno.h>
+#include <poll.h>
 
 #include <pthread.h>
 
@@ -491,7 +492,12 @@ NTSTATUS winlator_bus_wait(void *args)
                 last_time = curr_time;
             }
 
-            msleep(16);
+            /* wait for the next packet instead of sleeping a fixed time, so gamepad
+             * state changes reach the game as soon as they arrive */
+            {
+                struct pollfd pfd = {.fd = server_fd, .events = POLLIN};
+                poll(&pfd, 1, 100);
+            }
             continue;
         }
 
