@@ -571,7 +571,8 @@ static HRESULT vmr_query_interface(struct strmbase_renderer *iface, REFIID iid, 
         *out = &filter->IVMRFilterConfig9_iface;
     else if (IsEqualGUID(iid, &IID_IVMRMixerBitmap9))
         *out = &filter->IVMRMixerBitmap9_iface;
-    else if (IsEqualGUID(iid, &IID_IVMRMixerControl9) && filter->stream_count)
+    else if (IsEqualGUID(iid, &IID_IVMRMixerControl9)
+            && (filter->stream_count || filter->renderer.sink.pin.peer))
         *out = &filter->IVMRMixerControl9_iface;
     else if (IsEqualGUID(iid, &IID_IVMRMonitorConfig9) && filter->mode != VMR9Mode_Renderless)
         *out = &filter->IVMRMonitorConfig9_iface;
@@ -1663,7 +1664,7 @@ static HRESULT WINAPI mixer_control9_SetAlpha(IVMRMixerControl9 *iface, DWORD st
 
     FIXME("filter %p, stream %lu, alpha %.8e, stub!\n", filter, stream, alpha);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI mixer_control9_GetAlpha(IVMRMixerControl9 *iface, DWORD stream, float *alpha)
@@ -1672,7 +1673,10 @@ static HRESULT WINAPI mixer_control9_GetAlpha(IVMRMixerControl9 *iface, DWORD st
 
     FIXME("filter %p, stream %lu, alpha %p, stub!\n", filter, stream, alpha);
 
-    return E_NOTIMPL;
+    if (!alpha)
+        return E_POINTER;
+    *alpha = 1.0f;
+    return S_OK;
 }
 
 static HRESULT WINAPI mixer_control9_SetZOrder(IVMRMixerControl9 *iface, DWORD stream, DWORD z)
@@ -1681,7 +1685,7 @@ static HRESULT WINAPI mixer_control9_SetZOrder(IVMRMixerControl9 *iface, DWORD s
 
     FIXME("filter %p, stream %lu, z %lu, stub!\n", filter, stream, z);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI mixer_control9_GetZOrder(IVMRMixerControl9 *iface, DWORD stream, DWORD *z)
@@ -1690,7 +1694,10 @@ static HRESULT WINAPI mixer_control9_GetZOrder(IVMRMixerControl9 *iface, DWORD s
 
     FIXME("filter %p, stream %lu, z %p, stub!\n", filter, stream, z);
 
-    return E_NOTIMPL;
+    if (!z)
+        return E_POINTER;
+    *z = 0;
+    return S_OK;
 }
 
 static HRESULT WINAPI mixer_control9_SetOutputRect(IVMRMixerControl9 *iface,
@@ -1700,7 +1707,7 @@ static HRESULT WINAPI mixer_control9_SetOutputRect(IVMRMixerControl9 *iface,
 
     FIXME("filter %p, stream %lu, rect %s, stub!\n", filter, stream, debugstr_normalized_rect(rect));
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI mixer_control9_GetOutputRect(IVMRMixerControl9 *iface,
@@ -1710,7 +1717,11 @@ static HRESULT WINAPI mixer_control9_GetOutputRect(IVMRMixerControl9 *iface,
 
     FIXME("filter %p, stream %lu, rect %p, stub!\n", filter, stream, rect);
 
-    return E_NOTIMPL;
+    if (!rect)
+        return E_POINTER;
+    rect->left = rect->top = 0.0f;
+    rect->right = rect->bottom = 1.0f;
+    return S_OK;
 }
 
 static HRESULT WINAPI mixer_control9_SetBackgroundClr(IVMRMixerControl9 *iface, COLORREF color)
@@ -1719,7 +1730,7 @@ static HRESULT WINAPI mixer_control9_SetBackgroundClr(IVMRMixerControl9 *iface, 
 
     FIXME("filter %p, color #%06lx, stub!\n", filter, color);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI mixer_control9_GetBackgroundClr(IVMRMixerControl9 *iface, COLORREF *color)
@@ -1728,7 +1739,10 @@ static HRESULT WINAPI mixer_control9_GetBackgroundClr(IVMRMixerControl9 *iface, 
 
     FIXME("filter %p, color %p, stub!\n", filter, color);
 
-    return E_NOTIMPL;
+    if (!color)
+        return E_POINTER;
+    *color = 0;
+    return S_OK;
 }
 
 static HRESULT WINAPI mixer_control9_SetMixingPrefs(IVMRMixerControl9 *iface, DWORD flags)
