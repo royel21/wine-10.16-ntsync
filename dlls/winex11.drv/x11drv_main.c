@@ -66,7 +66,11 @@ unsigned int screen_bpp;
 Window root_window;
 BOOL usexvidmode = FALSE;
 BOOL usexrandr = FALSE;
+#ifdef SONAME_LIBXCOMPOSITE
 BOOL usexcomposite = TRUE;
+#else
+BOOL usexcomposite = FALSE;
+#endif
 BOOL use_egl = FALSE;
 BOOL use_take_focus = TRUE;
 BOOL use_primary_selection = FALSE;

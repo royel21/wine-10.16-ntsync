@@ -2362,6 +2362,15 @@ static void destroy_whole_window( struct x11drv_win_data *data, BOOL already_des
         XDeleteContext( data->display, data->whole_window, winContext );
         if (!already_destroyed)
         {
+            Window root, parent, *children;
+            unsigned int i, count;
+
+            /* keep client windows of child windows embedded in it, they are reparented again on their next update */
+            if (XQueryTree( data->display, data->whole_window, &root, &parent, &children, &count ))
+            {
+                for (i = 0; i < count; i++) XReparentWindow( gdi_display, children[i], get_dummy_parent(), 0, 0 );
+                if (children) XFree( children );
+            }
             XSync( gdi_display, False ); /* make sure XReparentWindow requests have completed before destroying whole_window */
             XDestroyWindow( data->display, data->whole_window );
         }

@@ -273,6 +273,9 @@ struct x11drv_client_surface
 
     HDC hdc_src;
     HDC hdc_dst;
+    Window embed_parent; /* toplevel X window the client window is embedded in */
+    POINT embed_pos;
+    BOOL embed_mapped;
 };
 
 static struct x11drv_client_surface *impl_from_client_surface( struct client_surface *client )
@@ -301,6 +304,12 @@ static void x11drv_client_surface_detach( struct client_surface *client )
 
     TRACE( "%s\n", debugstr_client_surface( client ) );
 
+    if (surface->embed_parent)
+    {
+        XReparentWindow( gdi_display, client_window, get_dummy_parent(), 0, 0 );
+        surface->embed_parent = 0;
+    }
+
     if ((data = get_win_data( hwnd )))
     {
         detach_client_window( data, client_window );
@@ -322,16 +331,66 @@ static void client_surface_update_size( HWND hwnd, struct x11drv_client_surface 
     surface->rect = rect;
 }
 
+/* Without XComposite the contents of an offscreen client window are lost, and presenting a
+ * child window, e.g. a DirectShow video window, would only copy black. Keep the client window
+ * of such a child in the X window of its toplevel instead, as an X child window over it. */
+static BOOL client_surface_embed_child( HWND hwnd, struct x11drv_client_surface *surface, BOOL offscreen )
+{
+    HWND toplevel = NtUserGetAncestor( hwnd, GA_ROOT );
+    UINT dpi = NtUserGetDpiForWindow( hwnd );
+    struct x11drv_win_data *data;
+    Window parent = 0;
+    POINT pos = {0};
+    BOOL mapped;
+    RECT rect;
+
+    if (offscreen && !usexcomposite && toplevel != hwnd && dpi == NtUserGetWinMonitorDpi( hwnd, MDT_RAW_DPI ) &&
+        NtUserGetClientRect( hwnd, &rect, dpi ))
+    {
+        NtUserMapWindowPoints( hwnd, toplevel, (POINT *)&rect, 2, dpi );
+        if ((data = get_win_data( toplevel )))
+        {
+            pos.x = rect.left + data->rects.client.left - data->rects.visible.left;
+            pos.y = rect.top + data->rects.client.top - data->rects.visible.top;
+            parent = data->whole_window;
+            release_win_data( data );
+        }
+    }
+
+    if (parent != surface->embed_parent || (parent && (pos.x != surface->embed_pos.x || pos.y != surface->embed_pos.y)))
+    {
+        TRACE( "%s embedding client window %lx in %lx at %d,%d\n", debugstr_client_surface( &surface->client ),
+               surface->window, parent, (int)pos.x, (int)pos.y );
+        if (parent == surface->embed_parent) XMoveWindow( gdi_display, surface->window, pos.x, pos.y );
+        else XReparentWindow( gdi_display, surface->window, parent ? parent : get_dummy_parent(), pos.x, pos.y );
+        if (parent != surface->embed_parent) surface->embed_mapped = TRUE; /* client windows are created mapped */
+        surface->embed_parent = parent;
+        surface->embed_pos = pos;
+    }
+    if (!parent) return FALSE;
+
+    mapped = NtUserIsWindowVisible( hwnd );
+    if (mapped != surface->embed_mapped)
+    {
+        if (mapped) XMapWindow( gdi_display, surface->window );
+        else XUnmapWindow( gdi_display, surface->window );
+        surface->embed_mapped = mapped;
+    }
+    return TRUE;
+}
+
 static void client_surface_update_offscreen( HWND hwnd, struct x11drv_client_surface *surface )
 {
-    BOOL offscreen = needs_offscreen_rendering( hwnd );
+    BOOL offscreen = needs_offscreen_rendering( hwnd ), embedded;
     struct x11drv_win_data *data;
+
+    if ((embedded = client_surface_embed_child( hwnd, surface, offscreen ))) offscreen = FALSE;
 
     TRACE( "%s offscreen %u\n", debugstr_client_surface( &surface->client ), offscreen );
 
     if (InterlockedExchange( &surface->client.offscreen, offscreen ) == offscreen)
     {
-        if (!offscreen && (data = get_win_data( hwnd )))
+        if (!offscreen && !embedded && (data = get_win_data( hwnd )))
         {
             attach_client_window( data, surface->window );
             release_win_data( data );
@@ -367,7 +426,7 @@ static void client_surface_update_offscreen( HWND hwnd, struct x11drv_client_sur
 #endif
     }
 
-    if ((data = get_win_data( hwnd )))
+    if (!embedded && (data = get_win_data( hwnd )))
     {
         if (offscreen) detach_client_window( data, surface->window );
         else attach_client_window( data, surface->window );
