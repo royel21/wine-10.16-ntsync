@@ -347,7 +347,11 @@ UINT WINAPI WINNLSGetIMEHotkey(HWND hwnd)
  */
 BOOL WINAPI WINNLSEnableIME(HWND hwnd, BOOL enable)
 {
-    FIXME("hwnd %p enable %d: stub!\n", hwnd, enable);
+    static BOOL once;
+
+    /* some games call this every frame */
+    if (!once++) FIXME("hwnd %p enable %d: stub!\n", hwnd, enable);
+    else TRACE("hwnd %p enable %d: stub!\n", hwnd, enable);
     return TRUE; /* success (?) */
 }
 
@@ -357,7 +361,10 @@ BOOL WINAPI WINNLSEnableIME(HWND hwnd, BOOL enable)
  */
 BOOL WINAPI WINNLSGetEnableStatus(HWND hwnd)
 {
-    FIXME("hwnd %p: stub!\n", hwnd);
+    static BOOL once;
+
+    if (!once++) FIXME("hwnd %p: stub!\n", hwnd);
+    else TRACE("hwnd %p: stub!\n", hwnd);
     return TRUE; /* success (?) */
 }
 
