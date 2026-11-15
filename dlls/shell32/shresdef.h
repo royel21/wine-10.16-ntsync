@@ -378,16 +378,17 @@
 #define IDI_SHELL_CONTROLLER       514
 #define IDI_SHELL_WINE             515
 
-/* 
-AVI resources, windows shell32 has 14 of them: 150-152 and 160-170
-FIXME: Need to add them, but for now just let them use the same: searching.avi 
-(also to limit shell32's size)
+/*
+AVI resources, windows shell32 has 14 of them: 150-152 and 160-170.
+Wine has three animations (search, copy and delete) shared between them
+(also to limit shell32's size).
 */
 #define IDR_AVI_SEARCH             150
 #define IDR_AVI_SEARCHING          151
 #define IDR_AVI_FINDCOMPUTER       152
 #define IDR_AVI_FILEMOVE           160
 #define IDR_AVI_FILECOPY           161
+#define IDR_AVI_FILERECYCLE        162
 #define IDR_AVI_FILENUKE           163
 #define IDR_AVI_FILEDELETE         164
 

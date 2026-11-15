@@ -1070,6 +1070,26 @@ IDI_SHELL_CONTROLLER ICON resources/controller.ico
 /* @makedep: resources/wine.ico */
 IDI_SHELL_WINE ICON resources/wine.ico
 
+/* @makedep: resources/search.avi */
+IDR_AVI_SEARCH AVI resources/search.avi
+IDR_AVI_SEARCHING AVI resources/search.avi
+IDR_AVI_FINDCOMPUTER AVI resources/search.avi
+
+/* @makedep: resources/filecopy.avi */
+IDR_AVI_FILEMOVE AVI resources/filecopy.avi
+IDR_AVI_FILECOPY AVI resources/filecopy.avi
+165 AVI resources/filecopy.avi
+166 AVI resources/filecopy.avi
+167 AVI resources/filecopy.avi
+168 AVI resources/filecopy.avi
+169 AVI resources/filecopy.avi
+170 AVI resources/filecopy.avi
+
+/* @makedep: resources/filedelete.avi */
+IDR_AVI_FILERECYCLE AVI resources/filedelete.avi
+IDR_AVI_FILENUKE AVI resources/filedelete.avi
+IDR_AVI_FILEDELETE AVI resources/filedelete.avi
+
 /* @makedep: ../../AUTHORS */
 AUTHORS RCDATA ../../AUTHORS
 
