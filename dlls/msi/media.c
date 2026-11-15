@@ -72,7 +72,7 @@ static UINT change_media(MSIPACKAGE *package, MSIMEDIAINFO *mi)
     while (r == IDRETRY && !source_matches_volume(mi, source_dir))
     {
         MSI_RecordSetStringW(record, 0, NULL);
-        MSI_RecordSetInteger(record, 1, MSIERR_CABNOTFOUND);
+        MSI_RecordSetInteger(record, 1, MSIERR_INSERTDISK);
         MSI_RecordSetStringW(record, 2, mi->disk_prompt);
         r = MSI_ProcessMessage(package, INSTALLMESSAGE_ERROR | MB_RETRYCANCEL, record);
     }
