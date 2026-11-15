@@ -26,6 +26,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
+#include "winuser.h"
 
 #include "wine/debug.h"
 
@@ -102,4 +103,50 @@ BOOL WINAPI DirectXSetupIsJapan(void)
 BOOL WINAPI DirectXSetupIsJapanNec(void)
 {
     return FALSE;
+}
+
+DWORD WINAPI DirectXSetupCallback( DWORD reason, DWORD msg_type, char *message, char *name, void *info )
+{
+    TRACE( "%lu, %#lx, %s, %s, %p\n", reason, msg_type, debugstr_a(message), debugstr_a(name), info );
+    return IDOK;
+}
+
+BOOL WINAPI DirectXSetupGetFileVersion( char *file, DWORD *version, DWORD *revision )
+{
+    FIXME( "%s, %p, %p: stub\n", debugstr_a(file), version, revision );
+    if (version) *version = 0;
+    if (revision) *revision = 0;
+    return FALSE;
+}
+
+INT WINAPI DirectXLoadString( UINT id, char *buffer, INT len )
+{
+    FIXME( "%u, %p, %d: stub\n", id, buffer, len );
+    if (buffer && len > 0) *buffer = 0;
+    return 0;
+}
+
+BOOL WINAPI DirectXSetupIsEng(void)
+{
+    return PRIMARYLANGID( GetUserDefaultUILanguage() ) == LANG_ENGLISH;
+}
+
+BOOL WINAPI DirectXSetupShowEULA( HWND owner )
+{
+    TRACE( "%p: accepted\n", owner );
+    return TRUE;
+}
+
+UINT WINAPI DirectXSetupGetEULAA( char *buffer, UINT len, WORD lang )
+{
+    FIXME( "%p, %u, %#x: stub\n", buffer, len, lang );
+    if (buffer && len) *buffer = 0;
+    return 0;
+}
+
+UINT WINAPI DirectXSetupGetEULAW( WCHAR *buffer, UINT len, WORD lang )
+{
+    FIXME( "%p, %u, %#x: stub\n", buffer, len, lang );
+    if (buffer && len) *buffer = 0;
+    return 0;
 }
