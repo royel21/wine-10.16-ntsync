@@ -1953,10 +1953,25 @@ static HRESULT WINAPI MediaControl_Run(IMediaControl *iface)
 static HRESULT WINAPI MediaControl_Pause(IMediaControl *iface)
 {
     struct filter_graph *graph = impl_from_IMediaControl(iface);
+    HRESULT hr;
 
     TRACE("graph %p.\n", graph);
 
-    return IMediaFilter_Pause(&graph->IMediaFilter_iface);
+    hr = IMediaFilter_Pause(&graph->IMediaFilter_iface);
+
+    /* Native notifies the application with EC_PAUSED when a pause request
+     * completes. Some applications wait for it, e.g. to skip a video after
+     * pausing and stopping it. A pending transition (S_FALSE) is reported
+     * right away. */
+    if (SUCCEEDED(hr))
+    {
+        EnterCriticalSection(&graph->event_cs);
+        if (!graph->media_events_disabled)
+            queue_media_event(graph, EC_PAUSED, S_OK, 0);
+        LeaveCriticalSection(&graph->event_cs);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI MediaControl_Stop(IMediaControl *iface)
