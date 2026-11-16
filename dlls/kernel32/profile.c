@@ -111,6 +111,34 @@ static void PROFILE_CopyEntry( LPWSTR buffer, LPCWSTR value, int len )
     if (quote && (len >= lstrlenW(value))) buffer[lstrlenW(buffer)-1] = '\0';
 }
 
+/* Copies a key's value without a trailing comment set off by a tab ("value<TAB>; comment"),
+ * which some old setup programs keep in their ini files and expect to be ignored. The
+ * stored value keeps the comment, so the file is written back unchanged. */
+static void PROFILE_CopyValue( LPWSTR buffer, LPCWSTR value, int len )
+{
+    const WCHAR *comment = wcsstr( value, L"\t;" );
+    WCHAR *copy;
+    int count;
+
+    if (!buffer || !comment)
+    {
+        PROFILE_CopyEntry( buffer, value, len );
+        return;
+    }
+
+    count = comment - value;
+    while (count && (value[count - 1] == ' ' || value[count - 1] == '\t')) count--;
+    if (!(copy = HeapAlloc( GetProcessHeap(), 0, (count + 1) * sizeof(WCHAR) )))
+    {
+        PROFILE_CopyEntry( buffer, value, len );
+        return;
+    }
+    memcpy( copy, value, count * sizeof(WCHAR) );
+    copy[count] = 0;
+    PROFILE_CopyEntry( buffer, copy, len );
+    HeapFree( GetProcessHeap(), 0, copy );
+}
+
 /* byte-swaps shorts in-place in a buffer. len is in WCHARs */
 static inline void PROFILE_ByteSwapShortBuffer(WCHAR * buffer, int len)
 {
@@ -1455,7 +1483,8 @@ INT WINAPI GetPrivateProfileStringW( LPCWSTR section, LPCWSTR entry,
         if (PROFILE_Open( filename, FALSE ))
         {
             PROFILEKEY *key = PROFILE_Find( &CurProfile->section, section, entry, FALSE, FALSE );
-            PROFILE_CopyEntry( buffer, (key && key->value) ? key->value : def_val, len );
+            if (key && key->value) PROFILE_CopyValue( buffer, key->value, len );
+            else PROFILE_CopyEntry( buffer, def_val, len );
             TRACE("-> %s\n", debugstr_w( buffer ));
             ret = lstrlenW( buffer );
         }
