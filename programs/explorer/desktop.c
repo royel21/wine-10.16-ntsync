@@ -1198,6 +1198,23 @@ static void set_shell_window( HWND hwnd )
     SetShellWindow( hwnd );
 }
 
+static LRESULT WINAPI progman_wnd_proc( HWND hwnd, UINT message, WPARAM wp, LPARAM lp )
+{
+    /* programs look the window up and show/disable it, keep it hidden */
+    if (message == WM_WINDOWPOSCHANGING) ((WINDOWPOS *)lp)->flags &= ~SWP_SHOWWINDOW;
+    return DefWindowProcW( hwnd, message, wp, lp );
+}
+
+/* old installers look for the "Program Manager" window before talking to it over DDE */
+static void create_progman_window(void)
+{
+    WNDCLASSW wc = {.lpfnWndProc = progman_wnd_proc, .lpszClassName = L"Progman"};
+
+    if (!RegisterClassW( &wc )) return;
+    CreateWindowExW( WS_EX_TOOLWINDOW, L"Progman", L"Program Manager", WS_POPUP | WS_DISABLED,
+                     0, 0, 0, 0, 0, 0, 0, NULL );
+}
+
 /* main desktop management function */
 void manage_desktop( WCHAR *arg )
 {
@@ -1309,6 +1326,7 @@ void manage_desktop( WCHAR *arg )
         {
             pShellDDEInit( TRUE );
         }
+        if (!nogui) create_progman_window();
     }
 
     /* if we have a command line, execute it */
