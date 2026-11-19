@@ -371,6 +371,64 @@ void set_load_order_app_name( const WCHAR *app_name )
 
 
 /***************************************************************************
+ *	main_exe_uses_direct3d
+ *
+ * Check whether the main exe holds one of the IDirect3D interface ids, i.e.
+ * renders 3D through DirectDraw.
+ */
+static BOOL main_exe_uses_direct3d(void)
+{
+    static const GUID iids[] =
+    {
+        {0x3bba0080, 0x2421, 0x11cf, {0xa3, 0x1a, 0x00, 0xaa, 0x00, 0xb9, 0x33, 0x56}}, /* IDirect3D */
+        {0x6aae1ec1, 0x662a, 0x11d0, {0x88, 0x9d, 0x00, 0xaa, 0x00, 0xbb, 0xb7, 0x6a}}, /* IDirect3D2 */
+        {0xbb223240, 0xe72b, 0x11d0, {0xa9, 0xb4, 0x00, 0xaa, 0x00, 0xc0, 0x99, 0x3e}}, /* IDirect3D3 */
+        {0xf5049e77, 0x4861, 0x11d2, {0xa4, 0x07, 0x00, 0xa0, 0xc9, 0x06, 0x29, 0xa8}}, /* IDirect3D7 */
+    };
+    static int result = -1;
+    const IMAGE_DOS_HEADER *dos;
+    const IMAGE_NT_HEADERS *nt;
+    const IMAGE_SECTION_HEADER *sec;
+    const char *base;
+    unsigned int i, j;
+
+    if (result != -1) return result;
+    result = FALSE;
+    if (!(base = (const char *)peb->ImageBaseAddress)) return FALSE;
+    dos = (const IMAGE_DOS_HEADER *)base;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return FALSE;
+    nt = (const IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return FALSE;
+    sec = (const IMAGE_SECTION_HEADER *)((const char *)&nt->OptionalHeader + nt->FileHeader.SizeOfOptionalHeader);
+
+    for (i = 0; i < nt->FileHeader.NumberOfSections && !result; i++)
+    {
+        const char *data = base + sec[i].VirtualAddress;
+        DWORD size = min( sec[i].Misc.VirtualSize, sec[i].SizeOfRawData );
+        DWORD pos;
+
+        if (!(sec[i].Characteristics & IMAGE_SCN_MEM_READ) || size < sizeof(GUID)) continue;
+        for (pos = 0; pos <= size - sizeof(GUID) && !result; pos += 4)
+            for (j = 0; j < ARRAY_SIZE(iids); j++)
+                if (!memcmp( data + pos, &iids[j], sizeof(GUID) )) result = TRUE;
+    }
+    TRACE( "main exe %s Direct3D\n", result ? "uses" : "doesn't use" );
+    return result;
+}
+
+/* CNC DDraw (set up by Winlator) only draws 2D and hands out dummy Direct3D objects, so programs
+ * rendering through Direct3D get the builtin ddraw instead. */
+static BOOL use_builtin_ddraw( const WCHAR *basename )
+{
+    static const WCHAR ddrawW[] = {'d','d','r','a','w',0};
+
+    if (!main_exe_loaded) return FALSE;
+    if (wcsicmp( basename, ddrawW )) return FALSE;
+    if (!getenv( "CNC_DDRAW_CONFIG_FILE" )) return FALSE;
+    return main_exe_uses_direct3d();
+}
+
+/***************************************************************************
  *	get_load_order   (internal)
  *
  * Return the loadorder of a module.
@@ -432,6 +490,11 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name )
     TRACE( "got hardcoded %s for %s\n", debugstr_loadorder(ret), debugstr_w(path) );
 
  done:
+    if ((ret == LO_NATIVE || ret == LO_NATIVE_BUILTIN) && use_builtin_ddraw( basename ))
+    {
+        TRACE( "using builtin %s instead of CNC DDraw\n", debugstr_us(nt_name) );
+        ret = LO_BUILTIN_NATIVE;
+    }
     free( module );
     return ret;
 }
