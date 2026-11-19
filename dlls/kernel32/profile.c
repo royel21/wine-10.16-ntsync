@@ -111,12 +111,26 @@ static void PROFILE_CopyEntry( LPWSTR buffer, LPCWSTR value, int len )
     if (quote && (len >= lstrlenW(value))) buffer[lstrlenW(buffer)-1] = '\0';
 }
 
-/* Copies a key's value without a trailing comment set off by a tab ("value<TAB>; comment"),
- * which some old setup programs keep in their ini files and expect to be ignored. The
- * stored value keeps the comment, so the file is written back unchanged. */
+/* Finds a trailing comment set off by a tab ("value<TAB>; comment" or "value<TAB>// comment"). */
+static const WCHAR *PROFILE_FindComment( LPCWSTR value )
+{
+    const WCHAR *p = value;
+
+    while ((p = wcschr( p, '\t' )))
+    {
+        const WCHAR *start = p;
+        while (*p == '\t' || *p == ' ') p++;
+        if (*p == ';' || (p[0] == '/' && p[1] == '/')) return start;
+    }
+    return NULL;
+}
+
+/* Copies a key's value without a trailing comment set off by a tab, which some old programs
+ * keep in their ini files and expect to be ignored. The stored value keeps the comment, so
+ * the file is written back unchanged. */
 static void PROFILE_CopyValue( LPWSTR buffer, LPCWSTR value, int len )
 {
-    const WCHAR *comment = wcsstr( value, L"\t;" );
+    const WCHAR *comment = PROFILE_FindComment( value );
     WCHAR *copy;
     int count;
 
