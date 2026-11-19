@@ -3865,6 +3865,50 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
     return WINED3D_OK;
 }
 
+/* Blit from a texture of another device (e.g. after a DirectDraw program created a new DirectDraw
+ * object when switching to fullscreen) through a copy of the source on the destination device. */
+static HRESULT wined3d_texture_blt_cross_device(struct wined3d_device_context *context,
+        struct wined3d_texture *dst_texture, unsigned int dst_sub_resource_idx, const RECT *dst_rect,
+        struct wined3d_texture *src_texture, unsigned int src_sub_resource_idx, const RECT *src_rect,
+        unsigned int flags, const struct wined3d_blt_fx *fx, enum wined3d_texture_filter_type filter)
+{
+    struct wined3d_device_context *src_context = &src_texture->resource.device->cs->c;
+    struct wined3d_box box = {src_rect->left, src_rect->top, src_rect->right, src_rect->bottom, 0, 1};
+    struct wined3d_resource_desc desc = {0};
+    struct wined3d_sub_resource_data data;
+    struct wined3d_map_desc map_desc;
+    struct wined3d_texture *copy;
+    RECT copy_rect;
+    HRESULT hr;
+
+    if (FAILED(hr = wined3d_device_context_map(src_context, &src_texture->resource, src_sub_resource_idx,
+            &map_desc, &box, WINED3D_MAP_READ)))
+        return hr;
+
+    desc.resource_type = WINED3D_RTYPE_TEXTURE_2D;
+    desc.format = src_texture->resource.format->id;
+    desc.access = WINED3D_RESOURCE_ACCESS_GPU;
+    desc.width = box.right - box.left;
+    desc.height = box.bottom - box.top;
+    desc.depth = 1;
+    data.data = map_desc.data;
+    data.row_pitch = map_desc.row_pitch;
+    data.slice_pitch = map_desc.slice_pitch;
+    hr = wined3d_texture_create(dst_texture->resource.device, &desc, 1, 1, 0, &data,
+            NULL, &wined3d_null_parent_ops, &copy);
+    wined3d_device_context_unmap(src_context, &src_texture->resource, src_sub_resource_idx);
+    if (FAILED(hr)) return hr;
+
+    if (src_texture->color_key_flags & WINED3D_CKEY_SRC_BLT)
+        wined3d_texture_set_color_key(copy, WINED3D_CKEY_SRC_BLT, &src_texture->src_blt_color_key);
+
+    SetRect(&copy_rect, 0, 0, desc.width, desc.height);
+    hr = wined3d_device_context_blt(context, dst_texture, dst_sub_resource_idx, dst_rect,
+            copy, 0, &copy_rect, flags, fx, filter);
+    wined3d_texture_decref(copy);
+    return hr;
+}
+
 HRESULT CDECL wined3d_device_context_blt(struct wined3d_device_context *context,
         struct wined3d_texture *dst_texture, unsigned int dst_sub_resource_idx, const RECT *dst_rect,
         struct wined3d_texture *src_texture, unsigned int src_sub_resource_idx, const RECT *src_rect,
@@ -3913,8 +3957,9 @@ HRESULT CDECL wined3d_device_context_blt(struct wined3d_device_context *context,
 
     if (dst_texture->resource.device != src_texture->resource.device)
     {
-        FIXME("Rejecting cross-device blit.\n");
-        return E_NOTIMPL;
+        TRACE("Cross-device blit, copying the source to the destination device.\n");
+        return wined3d_texture_blt_cross_device(context, dst_texture, dst_sub_resource_idx, dst_rect,
+                src_texture, src_sub_resource_idx, src_rect, flags, fx, filter);
     }
 
     wined3d_device_context_emit_blt_sub_resource(context, &dst_texture->resource, dst_sub_resource_idx,
