@@ -5516,7 +5516,8 @@ static void fix_cs_coordinates( CREATESTRUCTW *cs, INT *sw )
 
         if (is_default_coord( cs->x ))
         {
-            if (!is_default_coord( cs->y )) *sw = cs->y;
+            /* some programs pass uninitialized values, keep the default show command for those */
+            if (!is_default_coord( cs->y ) && (UINT)cs->y <= SW_MAX) *sw = cs->y;
             cs->x = (params->dwFlags & STARTF_USEPOSITION) ? params->dwX : mon_info.rcWork.left;
             cs->y = (params->dwFlags & STARTF_USEPOSITION) ? params->dwY : mon_info.rcWork.top;
         }
